@@ -1,0 +1,19 @@
+# Terraform working files
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+
+# Secrets — never commit
+.env
+
+# Sensitive override files
+*.auto.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Keep .terraform.lock.hcl tracked (reproducible provider versions).
