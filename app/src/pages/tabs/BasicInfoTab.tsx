@@ -40,7 +40,9 @@ export default function BasicInfoTab() {
   const user = state.user!;
   const s = computeSummary(bc);
   const locked = bc.status === 'approved' || bc.status === 'submitted';
-  const canEdit = !locked && (can.editProducts(user.role) || can.editResources(user.role));
+  // Basic Info is deal structure: BD + sponsors only. Presales edits only the
+  // Product Plan; Delivery only the Resource Plan and Labour Inputs.
+  const canEdit = !locked && can.editDealStructure(user.role);
   const canDeal = !locked && can.editDealStructure(user.role); // BD + sponsors
 
   const [removeQl, setRemoveQl] = useState<number | null>(null);

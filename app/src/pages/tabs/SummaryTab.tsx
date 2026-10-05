@@ -29,8 +29,9 @@ export default function SummaryTab() {
   const s = computeSummary(bc);
   const locked = bc.status === 'approved' || bc.status === 'submitted';
   const canDeal = !locked && can.editDealStructure(user.role); // BD + sponsors
-  const canEditIndirect =
-    !locked && (can.approve(user.role) || can.editProducts(user.role) || can.editResources(user.role));
+  // Summary inputs (applied % and indirect costs) are deal structure too:
+  // Presales and Delivery stay read-only here.
+  const canEditIndirect = canDeal;
 
   const [onlyReview, setOnlyReview] = useState(false);
   const [confirmAllOpen, setConfirmAllOpen] = useState(false);
