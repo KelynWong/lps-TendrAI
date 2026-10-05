@@ -3,11 +3,15 @@
 // the day rate (synced with Labour Inputs), man-days AND cost per FY with
 // totals (no inflation columns - inflation lives on the Summary tab).
 
+import { useState } from 'react';
+import { X } from 'lucide-react';
 import { fyLabel, resourceItemCost, resourceItemTotal, sum, MANDAY_PER_MONTH } from '../../lib/calc';
 import { money } from '../../lib/format';
 import { can, useStore } from '../../state/store';
-import { useDraft } from '../../state/draft';
+import { confirmProv, useDraft } from '../../state/draft';
 import { Fx, NumCell, ProvenanceBadge, TextCell } from '../../components/common';
+import { AddRowButton, Button, ConfirmDialog, IconButton } from '../../ui/ui';
+import { useToast } from '../../ui/toast';
 import type { ResourceItem } from '../../types';
 import { FY_COUNT } from '../../types';
 import { GRADES, ROLES, TEAMS, withCurrent } from '../../data/parameters';
@@ -18,10 +22,30 @@ export default function ResourcePlanTab() {
   const { state } = useStore();
   const { bc, update } = useDraft();
   const user = state.user!;
+  const toast = useToast();
   const locked = bc.status === 'approved' || bc.status === 'submitted';
   const editable = !locked && can.editResources(user.role);
   const canRates = !locked && can.editRatesAndMargins(user.role);
   const baseFY = bc.basicInfo.inflationBaseFY;
+  const [onlyReview, setOnlyReview] = useState(false);
+  const [confirmAllOpen, setConfirmAllOpen] = useState(false);
+
+  const confirmed = bc.resourceItems.filter((r) => r.provenance.kind === 'human').length;
+  const totalItems = bc.resourceItems.length;
+  const toReview = totalItems - confirmed;
+  const filterOn = onlyReview && toReview > 0;
+  const visibleItems = filterOn
+    ? bc.resourceItems.filter((r) => r.provenance.kind !== 'human')
+    : bc.resourceItems;
+
+  // Confirm-all and edits KEEP any citation; edits are flagged as changed
+  const confirmAll = () =>
+    update((d) => ({
+      ...d,
+      resourceItems: d.resourceItems.map((r) =>
+        r.provenance.kind === 'human' ? r : { ...r, provenance: confirmProv(r.provenance, user.name, false) },
+      ),
+    }));
 
   const upd = (item: ResourceItem) =>
     update((d) => {
@@ -34,7 +58,7 @@ export default function ResourcePlanTab() {
         ...d,
         labourMonthly,
         resourceItems: d.resourceItems.map((r) =>
-          r.id === item.id ? { ...item, provenance: { kind: 'human', confirmedBy: user.name } } : r,
+          r.id === item.id ? { ...item, provenance: confirmProv(item.provenance, user.name, true) } : r,
         ),
       };
     });
@@ -60,8 +84,10 @@ export default function ResourcePlanTab() {
       ],
     }));
 
-  const removeRow = (id: string) =>
+  const removeRow = (id: string) => {
     update((d) => ({ ...d, resourceItems: d.resourceItems.filter((r) => r.id !== id) }));
+    toast.push('info', 'Labour line removed', 'Use Discard in the save bar to restore unsaved removals.');
+  };
 
   const qlById = (id: number) => bc.quoteLines.find((q) => q.id === id);
   const fyIdx = Array.from({ length: FY_COUNT }, (_, i) => i);
@@ -79,8 +105,31 @@ export default function ResourcePlanTab() {
     );
 
   return (
-    <div className="tab-body scroll-x">
-      <table className="grid wide">
+    <div className="tab-body">
+      <div className="review-toolbar">
+        <span className="review-progress">{confirmed} of {totalItems} line items confirmed</span>
+        {toReview > 0 && (
+          <label>
+            <input type="checkbox" checked={onlyReview} onChange={(e) => setOnlyReview(e.target.checked)} />
+            Show only items needing review
+          </label>
+        )}
+        {editable && toReview > 0 && (
+          <Button compact onClick={() => setConfirmAllOpen(true)}>Confirm all in this tab</Button>
+        )}
+      </div>
+      <ConfirmDialog
+        open={confirmAllOpen}
+        title={`Confirm all ${totalItems - confirmed} remaining line items?`}
+        confirmLabel="Confirm all line items"
+        onConfirm={() => { setConfirmAllOpen(false); confirmAll(); }}
+        onClose={() => setConfirmAllOpen(false)}
+      >
+        Every AI-suggested labour line in this tab will be marked as confirmed by you.
+        Only do this after reviewing the man-days and rates.
+      </ConfirmDialog>
+      <div className="scroll-x">
+      <table className="grid wide sticky-first">
         <thead>
           <tr>
             <th rowSpan={2}>QL</th>
@@ -109,7 +158,7 @@ export default function ResourcePlanTab() {
           </tr>
         </thead>
         <tbody>
-          {bc.resourceItems.map((it) => {
+          {visibleItems.map((it) => {
             const costs = resourceItemCost(it);
             return (
               <tr key={it.id}>
@@ -135,7 +184,7 @@ export default function ResourcePlanTab() {
                 <td>{sel(it.role, withCurrent(it.role, ROLES), (v) => upd({ ...it, role: v }))}</td>
                 <td>{sel(it.grade, withCurrent(it.grade, GRADES), (v) => upd({ ...it, grade: v }))}</td>
                 <td className="num">
-                  <NumCell value={it.dayRate} editable={canRates} format={(v) => money(v)} onCommit={(v) => upd({ ...it, dayRate: v })} />
+                  <NumCell value={it.dayRate} editable={canRates} title={canRates ? undefined : "Only the Executive Sponsor can modify day rates"} format={(v) => money(v)} onCommit={(v) => upd({ ...it, dayRate: v })} />
                 </td>
                 <td className="desc">
                   <TextCell value={it.remarks} editable={editable} onCommit={(v) => upd({ ...it, remarks: v })} />
@@ -158,15 +207,22 @@ export default function ResourcePlanTab() {
                   <td className="num muted" key={`c${i}`}>{money(c)}</td>
                 ))}
                 <td className="num strong">{money(resourceItemTotal(it))}</td>
-                <td><ProvenanceBadge p={it.provenance} /></td>
+                <td><ProvenanceBadge p={it.provenance} context={it.role + (it.remarks ? " (" + it.remarks + ")" : "")} tab="Resource Plan" /></td>
                 {editable && (
                   <td>
-                    <button className="icon-btn" title="Remove line" onClick={() => removeRow(it.id)}>✕</button>
+                    <IconButton danger label="Remove labour line" icon={X} onClick={() => removeRow(it.id)} />
                   </td>
                 )}
               </tr>
             );
           })}
+          {editable && (
+            <AddRowButton
+              colSpan={7 + (FY_COUNT + 1) * 2 + 2}
+              label="Add labour line"
+              onClick={addRow}
+            />
+          )}
         </tbody>
         <tfoot>
           <tr>
@@ -185,7 +241,7 @@ export default function ResourcePlanTab() {
           </tr>
         </tfoot>
       </table>
-      {editable && <button className="btn" onClick={addRow}>+ Add labour line</button>}
+      </div>
     </div>
   );
 }

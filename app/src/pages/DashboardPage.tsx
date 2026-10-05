@@ -1,9 +1,11 @@
 // Dashboard - deal pipeline at a glance, driven by the tenders in state.
 
+import { Inbox } from 'lucide-react';
 import { computeSummary, finalChecks } from '../lib/calc';
 import { dateShort, money, pct } from '../lib/format';
 import { useStore } from '../state/store';
 import { StatusChip } from '../components/common';
+import { Button, EmptyState } from '../ui/ui';
 import type { TenderRecord } from '../types';
 
 export default function DashboardPage({ goTo }: { goTo: (page: string) => void }) {
@@ -25,6 +27,14 @@ export default function DashboardPage({ goTo }: { goTo: (page: string) => void }
         </div>
       </div>
 
+      {active.length === 0 && (
+        <EmptyState
+          icon={Inbox}
+          title="No active pursuits"
+          body="Upload a tender requirement document to start a pursuit; the draft business case appears here while it is in review."
+          action={<Button variant="primary" onClick={() => goTo('tenders')}>Go to Tenders</Button>}
+        />
+      )}
       {active.map((t) => {
         const s = t.bc ? computeSummary(t.bc) : null;
         const failing = t.bc ? finalChecks(t.bc, s!).filter((c) => !c.ok).length : 0;
@@ -41,10 +51,10 @@ export default function DashboardPage({ goTo }: { goTo: (page: string) => void }
             {s ? (
               <div className="kpi-row">
                 <div className="kpi"><span>TCV</span><b>{money(s.total.tcv)}</b></div>
-                <div className="kpi"><span>Direct Cost</span><b>{money(s.total.directTotal)}</b></div>
+                <div className="kpi"><span>Indirect cost</span><b>{money(s.total.indirectTotal)}</b></div>
+                <div className="kpi"><span>Direct cost</span><b>{money(s.total.directTotal)}</b></div>
                 <div className="kpi"><span>EBITDA</span><b className={s.total.ebitda >= 0 ? 'pos' : 'neg'}>{money(s.total.ebitda)} ({pct(s.total.ebitdaPct)})</b></div>
-                <div className="kpi"><span>Final Check</span><b className={failing ? 'neg' : 'pos'}>{failing ? `${failing} error(s)` : 'All OK'}</b></div>
-                <div className="kpi"><span>Quote Lines</span><b>{t.bc!.quoteLines.length}</b></div>
+                <div className="kpi"><span>Final Check</span><b className={failing ? 'neg' : 'pos'}>{failing ? failing + ' error(s)' : 'All OK'}</b></div>
               </div>
             ) : (
               <div className="kpi-row"><div className="kpi"><span>Status</span><b>Generating draft business case…</b></div></div>
@@ -59,7 +69,7 @@ export default function DashboardPage({ goTo }: { goTo: (page: string) => void }
       <section>
         <h3>Recent pursuits</h3>
         <table className="grid">
-          <thead><tr><th>Reference</th><th>Title</th><th>Customer</th><th className="num">TCV</th><th>Status</th></tr></thead>
+          <thead><tr><th>Reference</th><th>Title</th><th>Customer</th><th className="num">TCV</th><th className="num">Indirect cost</th><th className="num">Direct cost</th><th className="num">EBITDA</th><th>Status</th></tr></thead>
           <tbody>
             {recent.map((t) => {
               const s = t.bc ? computeSummary(t.bc) : null;
@@ -69,6 +79,9 @@ export default function DashboardPage({ goTo }: { goTo: (page: string) => void }
                   <td>{t.title}</td>
                   <td>{t.agency}</td>
                   <td className="num">{s ? money(s.total.tcv) : '-'}</td>
+                  <td className="num">{s ? money(s.total.indirectTotal) : '-'}</td>
+                  <td className="num">{s ? money(s.total.directTotal) : '-'}</td>
+                  <td className="num">{s ? pct(s.total.ebitdaPct) : '-'}</td>
                   <td>
                     {t.outcome === 'Won' && <span className="pill pill-won">Won</span>}
                     {t.outcome === 'Lost' && <span className="pill pill-lost">Lost</span>}

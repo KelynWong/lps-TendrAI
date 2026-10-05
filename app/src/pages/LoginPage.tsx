@@ -2,6 +2,7 @@
 // ALB; the POC replicates the experience with hardcoded demo accounts.
 
 import { useState } from 'react';
+import { Check } from 'lucide-react';
 import { DEMO_PASSWORD, USERS } from '../data/fixtures';
 import { useStore } from '../state/store';
 
@@ -35,9 +36,9 @@ export default function LoginPage() {
             grounded in what we have won before.
           </p>
           <ul className="login-points">
-            <li>Upload a tender and receive a first-cut business case with cited comparables</li>
-            <li>Review, adjust and approve with costs recalculated in real time</li>
-            <li>One-click submission form and MSPO template population</li>
+            <li><Check size={14} aria-hidden />Upload a tender and receive a first-cut business case with cited comparables</li>
+            <li><Check size={14} aria-hidden />Review, adjust and approve with costs recalculated in real time</li>
+            <li><Check size={14} aria-hidden />One-click submission form and MSPO template population</li>
           </ul>
         </div>
       </div>
@@ -67,7 +68,7 @@ export default function LoginPage() {
               onChange={(e) => { setPassword(e.target.value); setError(''); }}
             />
           </label>
-          {error && <div className="login-error">{error}</div>}
+          {error && <div className="login-error" role="alert">{error}</div>}
           <button className="btn primary wide" type="submit">Sign in</button>
           <div className="login-links">
             <a onClick={(e) => e.preventDefault()} href="#">Forgot your password?</a>

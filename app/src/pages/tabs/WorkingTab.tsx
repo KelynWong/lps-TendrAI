@@ -18,6 +18,24 @@ export default function WorkingTab() {
 
   return (
     <div className="tab-body">
+      <div className="kpi-row">
+        <div className="kpi">
+          <span>TCV</span>
+          <b><Fx f={'= Σ quote-line sell totals\nShown on Basic Info and Summary.'}>{money(s.total.tcv)}</Fx></b>
+        </div>
+        <div className="kpi">
+          <span>Gross Margin</span>
+          <b><Fx f={'= (TCV − Direct Cost) ÷ TCV'}>{pct(s.total.grossMarginPct)}</Fx></b>
+        </div>
+        <div className="kpi">
+          <span>EBITDA</span>
+          <b className={s.total.ebitda >= 0 ? 'pos' : 'neg'}>
+            <Fx f={'= Summary! TCV − Total Cost\n(after contingency, inflation,\nfinance cost and other indirects)'}>
+              {money(s.total.ebitda)} ({pct(s.total.ebitdaPct)})
+            </Fx>
+          </b>
+        </div>
+      </div>
       <div className="working-grid">
         {bc.quoteLines.map((q, i) => {
           const l = s.perLine[i];
@@ -74,27 +92,6 @@ export default function WorkingTab() {
             </section>
           );
         })}
-        <section className="card working-card">
-          <h3>Deal Total</h3>
-          <div className="kpi-row">
-            <div className="kpi">
-              <span>TCV</span>
-              <b><Fx f={'= Σ quote-line sell totals\nShown on Basic Info and Summary.'}>{money(s.total.tcv)}</Fx></b>
-            </div>
-            <div className="kpi">
-              <span>Gross Margin</span>
-              <b><Fx f={'= (TCV − Direct Cost) ÷ TCV'}>{pct(s.total.grossMarginPct)}</Fx></b>
-            </div>
-            <div className="kpi">
-              <span>EBITDA</span>
-              <b className={s.total.ebitda >= 0 ? 'pos' : 'neg'}>
-                <Fx f={'= Summary! TCV − Total Cost\n(after contingency, inflation,\nfinance cost and other indirects)'}>
-                  {money(s.total.ebitda)} ({pct(s.total.ebitdaPct)})
-                </Fx>
-              </b>
-            </div>
-          </div>
-        </section>
       </div>
     </div>
   );

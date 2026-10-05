@@ -9,7 +9,7 @@ Password for **all** accounts: `Demo2026!`
 
 | Email | Name | Role | Can do |
 |---|---|---|---|
-| `john.price@lpstech.com` | John Price | Bidding Manager | Upload tender documents, submit business case for DRB, upload + download the submission form. **Cannot** edit line items. |
+| `john.price@lpstech.com` | John Price | Bidding Manager | Upload tender documents, upload + download the submission form. **Cannot** edit line items. |
 | `chee.wee@lpstech.com` | Chee Wee | Presales | Add/modify/remove **product** lines (hardware, software, third-party). Cannot approve. |
 | `priya.nair@lpstech.com` | Priya Nair | Delivery | Add/modify/remove **labour** lines (roles, man-days). |
 | `felicia.phan@lpstech.com` | Felicia Phan | Business Development | Edit both plans, export MSPO templates. |
@@ -100,10 +100,10 @@ Password for **all** accounts: `Demo2026!`
 - [ ] Nav shows only: Dashboard · Tenders · Historical Data · Audit Trail.
 - [ ] Dropping a file on Tenders creates a new tender and the pipeline animates; the
       Business Case / Submission Form sections are disabled until it completes.
-- [ ] John Price: no editable cells anywhere; *Submit for DRB* visible in Draft status.
+- [ ] John Price: no editable cells anywhere.
 - [ ] Chee Wee: can edit Product Plan, cannot edit Resource Plan or approve.
 - [ ] Priya Nair: the reverse.
-- [ ] Eng Chuan Puay: margin & day-rate cells editable; approve/reject only in *In DRB*.
+- [ ] Eng Chuan Puay: margin & day-rate cells editable; approve button visible while unlocked.
 - [ ] Editing any cost → Summary/Cash Flow/TCV update immediately; Final Check reacts.
 - [ ] One sponsor approval shows the amber "1 of 2" banner; an edit clears it (check Audit Log)
 - [ ] Second sponsor approval (different user) → case locks; Submission Form section accepts an upload, shows the
@@ -121,3 +121,5 @@ production design behind it is real and sits in `terraform/`: Cognito sign-in (t
 screen mimics its hosted UI), documents in encrypted S3, Titan Text Embeddings V2 +
 pgvector retrieval, Bedrock generation — all in ap-southeast-1, nothing public except
 the WAF-fronted load balancer.
+
+- After downloading the submission form (status Submitted), the tender outcome (Won / Lost / Awaiting result) is recorded manually via the dropdown in the tender header - it feeds the Dashboard and the historical record.

@@ -1,8 +1,24 @@
-// Shared UI atoms: provenance badges (NFR12/13), status chips, editable cells.
+// Shared UI atoms: figure-state badges (trust system), status chips,
+// editable cells, sorting, pagination, formula tooltips.
 
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  FileSearch,
+  Lock,
+  Sparkles,
+} from 'lucide-react';
 import type { BcStatus, Provenance } from '../types';
+import { useCitation } from '../ui/citation';
 
 /**
  * Excel-style formula tooltip: hover a computed cell (or a row/column header)
@@ -11,12 +27,23 @@ import type { BcStatus, Provenance } from '../types';
  */
 export function Fx({ f, children }: { f: string; children: ReactNode }) {
   const [pos, setPos] = useState('fx-right fx-above');
+  const [style, setStyle] = useState<React.CSSProperties>({ display: 'flex' });
   const [show, setShow] = useState(false);
   const place = (el: HTMLElement) => {
     const r = el.getBoundingClientRect();
     const horiz = r.left < window.innerWidth / 2 ? 'fx-left' : 'fx-right';
     const vert = r.top < 180 ? 'fx-below' : 'fx-above';
     setPos(`${horiz} ${vert}`);
+    // Fixed positioning so the tip escapes scroll panes (overflow clipping).
+    // display:flex is set inline too: stylesheet flex on this out-of-flow
+    // inline span gets blockified by the browser, which stretched the fx
+    // marker across the full row - the inline declaration wins reliably.
+    setStyle({
+      position: 'fixed',
+      display: 'flex',
+      ...(vert === 'fx-below' ? { top: r.bottom + 7 } : { bottom: window.innerHeight - r.top + 7 }),
+      ...(horiz === 'fx-left' ? { left: r.left } : { right: window.innerWidth - r.right }),
+    });
   };
   // Visibility is state-driven (not CSS :hover) and the tip ignores pointer
   // events, so it can never hold itself open or appear without a live hover.
@@ -27,12 +54,17 @@ export function Fx({ f, children }: { f: string; children: ReactNode }) {
       onMouseLeave={() => setShow(false)}
     >
       {children}
-      {show && (
-        <span className="fx-tip" role="tooltip">
-          <span className="fx-fx">fx</span>
-          {f}
-        </span>
-      )}
+      {/* Portalled to <body>: a sticky header cell creates its own stacking
+          context, which would otherwise let later sticky cells paint over
+          the tip regardless of z-index. */}
+      {show &&
+        createPortal(
+          <span className="fx-tip" role="tooltip" style={style}>
+            <span className="fx-fx" aria-hidden>fx</span>
+            <span className="fx-text">{f}</span>
+          </span>,
+          document.body,
+        )}
     </span>
   );
 }
@@ -78,8 +110,8 @@ export function SortTh({
   return (
     <th className={`sort-th ${num ? 'num' : ''}`} onClick={() => onToggle(k)}>
       {label}
-      <span className={`sort-arrow ${active ? 'on' : ''}`}>
-        {active ? (sort!.dir === 1 ? '▲' : '▼') : '⇅'}
+      <span className={`sort-arrow ${active ? 'on' : ''}`} aria-hidden>
+        {active ? (sort!.dir === 1 ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={12} />}
       </span>
     </th>
   );
@@ -120,11 +152,11 @@ export function Pager({
 }) {
   return (
     <div className="pager">
-      <button className="btn small" disabled={cur === 0} onClick={() => setPage(0)}>«</button>
-      <button className="btn small" disabled={cur === 0} onClick={() => setPage(cur - 1)}>‹</button>
+      <button className="btn btn-compact" aria-label="First page" title="First page" disabled={cur === 0} onClick={() => setPage(0)}><ChevronsLeft size={16} aria-hidden /></button>
+      <button className="btn btn-compact" aria-label="Previous page" title="Previous page" disabled={cur === 0} onClick={() => setPage(cur - 1)}><ChevronLeft size={16} aria-hidden /></button>
       <span className="pager-page">Page {cur + 1} of {pages}</span>
-      <button className="btn small" disabled={cur >= pages - 1} onClick={() => setPage(cur + 1)}>›</button>
-      <button className="btn small" disabled={cur >= pages - 1} onClick={() => setPage(pages - 1)}>»</button>
+      <button className="btn btn-compact" aria-label="Next page" title="Next page" disabled={cur >= pages - 1} onClick={() => setPage(cur + 1)}><ChevronRight size={16} aria-hidden /></button>
+      <button className="btn btn-compact" aria-label="Last page" title="Last page" disabled={cur >= pages - 1} onClick={() => setPage(pages - 1)}><ChevronsRight size={16} aria-hidden /></button>
       <span className="muted small">{from}-{to} of {total} rows</span>
     </div>
   );
@@ -168,40 +200,73 @@ export function DateCell({
   );
 }
 
-export function ProvenanceBadge({ p }: { p: Provenance }) {
+/**
+ * Figure-state badge. Four states, each distinguishable by icon + label +
+ * border style (never colour alone):
+ *  - Cited:     AI-suggested, grounded in a historical record (solid border,
+ *               underlined, click opens the source panel)
+ *  - Estimate:  AI-suggested, NO source - unverified (dashed border)
+ *  - Confirmed: human-confirmed (solid border, check icon)
+ * The sparkle icon marks both AI-suggested states as not yet confirmed.
+ */
+export function ProvenanceBadge({ p, context, tab }: { p: Provenance; context?: string; tab?: string }) {
+  const { show } = useCitation();
   if (p.kind === 'grounded') {
     return (
-      <span
-        className="badge badge-grounded"
-        title={`Grounded in ${p.citation.docId} - ${p.citation.title} (similarity ${(p.citation.similarity * 100).toFixed(0)}%)\n“${p.citation.excerpt}”`}
+      <button
+        type="button"
+        className="badge badge-cited"
+        title={`AI suggested, cited from ${p.citation.docId}. Select to view the source.`}
+        onClick={() => show({ ...p.citation, context, tab })}
       >
-        ◆ {p.citation.docId}
-      </span>
+        <Sparkles size={12} aria-hidden />
+        Cited · {p.citation.docId}
+      </button>
     );
   }
   if (p.kind === 'estimate') {
     return (
-      <span className="badge badge-estimate" title="AI industry best-practice estimate - UNVERIFIED, no historical citation">
-        ◇ Estimate
+      <span className="badge badge-estimate" title="AI suggested, industry estimate. No source document - verify before relying on it.">
+        <Sparkles size={12} aria-hidden />
+        Estimate · no source
       </span>
     );
   }
+  // Confirmed value that was originally cited: the citation is preserved, so
+  // the badge still opens the source. Two distinct states: the cited value was
+  // confirmed as-is, or it was changed after citing (old value kept in panel).
+  if (p.citation) {
+    return (
+      <button
+        type="button"
+        className={`badge ${p.edited ? 'badge-cited-edited' : 'badge-cited-confirmed'}`}
+        title={`${p.edited ? `Cited value changed by ${p.confirmedBy}; the original cited value is kept` : `Cited value confirmed unchanged by ${p.confirmedBy}`}. Select to view the source.`}
+        onClick={() => show({ ...p.citation!, context, tab, confirmedBy: p.confirmedBy, edited: p.edited })}
+      >
+        <Sparkles size={12} aria-hidden />
+        <CheckCircle2 size={12} aria-hidden />
+        {p.edited ? 'Cited · edited' : 'Cited · confirmed'} · {p.confirmedBy.split(' ')[0]}
+      </button>
+    );
+  }
   return (
-    <span className="badge badge-human" title={`Human-confirmed by ${p.confirmedBy}`}>
-      ✓ {p.confirmedBy.split(' ')[0]}
+    <span className="badge badge-human" title={`Confirmed by ${p.confirmedBy}`}>
+      <CheckCircle2 size={12} aria-hidden />
+      Confirmed · {p.confirmedBy.split(' ')[0]}
     </span>
   );
 }
 
-export function ProvenanceLegend() {
+/** Legend for the figure states; rendered in its own row, toggled by the Hint button. */
+export function ProvenanceLegendItems() {
   return (
-    <div className="legend">
-      <span className="badge badge-grounded">◆ Cited</span>
-      <span>AI-generated, grounded in a historical record</span>
-      <span className="badge badge-estimate">◇ Estimate</span>
-      <span>AI estimate - unverified, no citation</span>
-      <span className="badge badge-human">✓ Name</span>
-      <span>Human-confirmed / edited</span>
+    <div className="legend-items">
+      <span><span className="badge badge-cited"><Sparkles size={12} aria-hidden />Cited · DOC-ID</span> AI suggested, grounded in a historical record. Click to view the source.</span>
+      <span><span className="badge badge-estimate"><Sparkles size={12} aria-hidden />Estimate · no source</span> AI suggested, unverified industry estimate.</span>
+      <span><span className="badge badge-cited-confirmed"><Sparkles size={12} aria-hidden /><CheckCircle2 size={12} aria-hidden />Cited · confirmed · Name</span> Cited value confirmed unchanged by a person; the citation is kept.</span>
+      <span><span className="badge badge-cited-edited"><Sparkles size={12} aria-hidden /><CheckCircle2 size={12} aria-hidden />Cited · edited · Name</span> Cited value changed by a person; the original cited value stays viewable.</span>
+      <span><span className="badge badge-human"><CheckCircle2 size={12} aria-hidden />Confirmed · Name</span> Human-entered or confirmed value with no citation.</span>
+      <span><FileSearch size={14} aria-hidden /> AI-suggested figures carry the sparkle icon until someone confirms them.</span>
     </div>
   );
 }
@@ -210,13 +275,18 @@ export const STATUS_META: Record<BcStatus, { label: string; cls: string }> = {
   processing: { label: 'Processing', cls: 'st-processing' },
   draft: { label: 'Draft - AI generated', cls: 'st-draft' },
   in_drb: { label: 'In Deal Review Board', cls: 'st-drb' },
-  approved: { label: 'Approved · Locked', cls: 'st-approved' },
+  approved: { label: 'Approved and locked', cls: 'st-approved' },
   submitted: { label: 'Submitted', cls: 'st-submitted' },
 };
 
 export function StatusChip({ status }: { status: BcStatus }) {
   const m = STATUS_META[status];
-  return <span className={`status-chip ${m.cls}`}>{m.label}</span>;
+  return (
+    <span className={`status-chip ${m.cls}`}>
+      {status === 'approved' && <Lock size={12} aria-hidden />}
+      {m.label}
+    </span>
+  );
 }
 
 /** Numeric cell: renders formatted text, becomes an input when editable and clicked. */

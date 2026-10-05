@@ -226,7 +226,12 @@ export function computeSummary(bc: BusinessCaseState): BcSummary {
   });
 
   const months = computeCashFlow(bc, duration);
-  const financeCostTotal = sum(months.map((m) => m.financeCost));
+  // An explicit Finance Cost % (Summary total column) overrides the compound
+  // interest computed from the Cash Flow.
+  const financeCostTotal =
+    bc.financeOverridePct != null
+      ? bc.financeOverridePct * sum(perLine.map((l) => l.tcv))
+      : sum(months.map((m) => m.financeCost));
   const grandDirect = sum(perLine.map((l) => l.directTotal));
 
   for (const l of perLine) {

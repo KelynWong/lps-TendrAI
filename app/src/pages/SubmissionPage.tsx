@@ -3,9 +3,13 @@
 // from the approved business case as far as its fields allow.
 
 import { useRef, useState } from 'react';
+import { Download, FileUp, Loader2 } from 'lucide-react';
 import { computeSummary } from '../lib/calc';
 import { dateShort, money, ts } from '../lib/format';
 import { can, useBc, useStore, useTender } from '../state/store';
+import { TextCell } from '../components/common';
+import { Banner, Button } from '../ui/ui';
+import { useToast } from '../ui/toast';
 
 interface FormField {
   label: string;
@@ -19,6 +23,7 @@ export default function SubmissionPage() {
   const tender = useTender();
   const bc = useBc();
   const s = computeSummary(bc);
+  const toast = useToast();
   const approved = bc.status === 'approved' || bc.status === 'submitted';
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -53,11 +58,21 @@ export default function SubmissionPage() {
     { label: 'Bank / Performance Guarantee Reference', value: 'Requires manual input', manual: true },
     { label: 'Company Stamp & Date', value: 'Requires manual input', manual: true },
   ];
-  const filled = fields.filter((f) => !f.manual).length;
+  const overrides = tender.submissionOverrides ?? {};
+  const effective = fields.map((f) => {
+    const edited = overrides[f.label];
+    return {
+      label: f.label,
+      value: edited ?? f.value,
+      manual: f.manual === true && edited === undefined,
+      edited: edited !== undefined,
+    };
+  });
+  const filled = effective.filter((f) => !f.manual).length;
 
   // build the Word-compatible download
   const download = () => {
-    const rows = fields
+    const rows = effective
       .map((f) =>
         `<tr><td style="width:38%;background:#f0f0f0;padding:6px 10px;border:1px solid #999"><b>${f.label}</b></td><td style="padding:6px 10px;border:1px solid #999;${f.manual ? 'color:#9a6700;font-style:italic' : ''}">${f.value}</td></tr>`)
       .join('');
@@ -78,15 +93,11 @@ export default function SubmissionPage() {
 
   if (!approved) {
     return (
-      <div className="card locked-card">
-        <b>🔒 Submission form locked.</b>
-        <p>
-          The tender submission form can only be uploaded and populated after the business case has
-          been approved by the Deal Review Board. Current status:{' '}
-          <b>{bc.status === 'draft' ? 'Draft' : 'In Deal Review Board'}</b>.
-        </p>
-        <p className="muted">Submit for DRB (Bidding Manager) and approve (Sponsor) in the Business Case section first.</p>
-      </div>
+      <Banner kind='locked'>
+        The tender submission form unlocks after both sponsors approve the business case.
+        Current status: <b>{bc.status === 'draft' ? 'Draft' : 'In review'}</b>.
+        Both the Executive and Business Sponsors approve it in the Business Case section.
+      </Banner>
     );
   }
 
@@ -100,7 +111,7 @@ export default function SubmissionPage() {
         </p>
         {analyzing ? (
           <div className="dropzone analyzing">
-            <span className="stage-icon spin-icon">◐</span> Reading the form and matching fields to the
+            <Loader2 size={16} aria-hidden className="spin-icon" /> Reading the form and matching fields to the
             approved business case…
           </div>
         ) : (
@@ -110,8 +121,10 @@ export default function SubmissionPage() {
             onDragLeave={() => setDragging(false)}
             onDrop={(e) => { e.preventDefault(); setDragging(false); acceptForm(e.dataTransfer.files?.[0]); }}
             onClick={() => canUpload && inputRef.current?.click()}
+            onKeyDown={(e) => { if (canUpload && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); inputRef.current?.click(); } }}
             role="button"
             tabIndex={0}
+            aria-label="Upload the tender submission form"
           >
             <input
               ref={inputRef}
@@ -122,7 +135,7 @@ export default function SubmissionPage() {
             />
             {canUpload ? (
               <>
-                <b>Drop the submission form here</b> or click to browse (DOCX, PDF)
+                <b><FileUp size={16} aria-hidden style={{ verticalAlign: "-3px" }} /> Drop the submission form here</b> or click to browse (DOCX, PDF)
                 <br />
                 <span className="muted small">Business case {bc.basicInfo.crmId} approved by {bc.approvedBy} - ready to populate</span>
               </>
@@ -151,15 +164,31 @@ export default function SubmissionPage() {
       </p>
       <table className="grid form-grid">
         <tbody>
-          {fields.map((f) => (
+          {effective.map((f) => (
             <tr key={f.label}>
               <td className="form-label">{f.label}</td>
-              <td className={f.manual ? 'manual-field' : ''}>{f.value}</td>
+              <td className={f.manual ? 'manual-field' : ''}>
+                {canUpload ? (
+                  <TextCell
+                    value={f.value}
+                    editable
+                    onCommit={(v) => dispatch({ type: 'update-submission-field', label: f.label, value: v })}
+                  />
+                ) : (
+                  f.value
+                )}
+                {f.edited && <span className="muted small"> (edited)</span>}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
-      <button className="btn primary" onClick={download}>⬇ Download prefilled form (DOCX)</button>
+      {canUpload && (
+        <p className="sub">Drafted values can be edited before export - select a value to change it.</p>
+      )}
+      <div className="form-actions">
+        <Button variant='primary' icon={Download} onClick={() => { download(); toast.push('success', 'Submission form downloaded', 'Prefilled DOCX saved; fields needing manual input are marked.'); }}>Download prefilled form (DOCX)</Button>
+      </div>
     </div>
   );
 }

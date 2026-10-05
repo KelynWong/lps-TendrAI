@@ -39,9 +39,14 @@ export const TENDER = {
   processingMinutes: 17, // NFR10: >100 pages within 15-20 min
 };
 
-const cite = (docId: string, title: string, similarity: number, excerpt: string): Provenance => ({
+const cite = (docId: string, title: string, similarity: number, excerpt: string, tenderExcerpt?: string): Provenance => ({
   kind: 'grounded',
-  citation: { docId, title, similarity, excerpt },
+  citation: { docId, title, similarity, excerpt, tenderExcerpt, source: 'historical' },
+});
+/** Value read directly from the uploaded tender document (no historical match) */
+const extracted = (docId: string, title: string, excerpt: string): Provenance => ({
+  kind: 'grounded',
+  citation: { docId, title, similarity: 1, excerpt, source: 'tender' },
 });
 const estimate: Provenance = { kind: 'estimate' };
 
@@ -56,7 +61,8 @@ const productItems: ProductItem[] = [
     unitCost: 950,
     qtyByFY: [500, 500, 500],
     remarks: 'Per agent per year, 3-year committed pricing',
-    provenance: cite('BC-2023-041', 'Business Case - Regional Bank Contact Centre (Won, 2023)', 0.91, 'CCaaS licence S$942/agent/yr on 3-yr commit, 460 agents'),
+    provenance: cite('BC-2023-041', 'Business Case - Regional Bank Contact Centre (Won, 2023)', 0.91, 'CCaaS licence S$942/agent/yr on 3-yr commit, 460 agents',
+      'Clause 6.1.2: The Contractor shall provide an omnichannel cloud contact centre platform licensed for no fewer than 500 named agents for the full contract term.'),
   },
   {
     id: 'p2',
@@ -80,7 +86,8 @@ const productItems: ProductItem[] = [
     unitCost: 1450,
     qtyByFY: [520, 0, 0],
     remarks: '500 agents + 20 spares, deployed in Year 1',
-    provenance: cite('BC-2024-012', 'Business Case - Govt Shared Services Helpdesk (Won, 2024)', 0.88, 'Workstation + headset bundle at S$1,430/seat, 380 seats'),
+    provenance: cite('BC-2024-012', 'Business Case - Govt Shared Services Helpdesk (Won, 2024)', 0.88, 'Workstation + headset bundle at S$1,430/seat, 380 seats',
+      'Clause 6.3.1: The Contractor shall supply, deploy and maintain agent workstations and certified headsets for all 500 agent positions, including operational spares.'),
   },
   {
     id: 'p4',
@@ -92,7 +99,8 @@ const productItems: ProductItem[] = [
     unitCost: 86000,
     qtyByFY: [2, 0, 0],
     remarks: 'Active/active across two sites',
-    provenance: cite('TD-2023-118', 'Tender Requirement - Statutory Board Hotline Refresh (2023)', 0.84, 'SBC HA pair incl. support quoted S$84.5k/unit'),
+    provenance: cite('TD-2023-118', 'Tender Requirement - Statutory Board Hotline Refresh (2023)', 0.84, 'SBC HA pair incl. support quoted S$84.5k/unit',
+      'Clause 6.5.4: Voice ingress shall be protected by session border controllers deployed as a high-availability pair across both designated data centres.'),
   },
   {
     id: 'p5',
@@ -116,7 +124,8 @@ const productItems: ProductItem[] = [
     unitCost: 48000,
     qtyByFY: [1, 1, 1],
     remarks: 'Required per tender clause 7.4.2',
-    provenance: cite('WP-2024-007', 'Won Proposal - Ministry Citizen Portal (2024)', 0.86, 'Annual VAPT for in-scope systems, S$45–50k/yr'),
+    provenance: cite('WP-2024-007', 'Proposal - Ministry Citizen Portal (2024)', 0.86, 'Annual VAPT for in-scope systems, S$45–50k/yr',
+      'Clause 7.4.2: An independent penetration test and security review of all in-scope systems shall be conducted annually by an accredited provider.'),
   },
   {
     id: 'p7',
@@ -128,7 +137,8 @@ const productItems: ProductItem[] = [
     unitCost: 96,
     qtyByFY: [600, 600, 600],
     remarks: 'Per channel per year, committed rate',
-    provenance: cite('BC-2023-041', 'Business Case - Regional Bank Contact Centre (Won, 2023)', 0.83, 'SIP channel at S$8/mth committed (S$96/yr)'),
+    provenance: cite('BC-2023-041', 'Business Case - Regional Bank Contact Centre (Won, 2023)', 0.83, 'SIP channel at S$8/mth committed (S$96/yr)',
+      'Clause 6.5.1: The solution shall support no fewer than 600 concurrent inbound voice channels delivered via SIP trunking.'),
   },
   {
     id: 'p8',
@@ -140,7 +150,8 @@ const productItems: ProductItem[] = [
     unitCost: 142000,
     qtyByFY: [1, 1, 1],
     remarks: '24x7 vendor back-to-back support',
-    provenance: cite('BC-2024-012', 'Business Case - Govt Shared Services Helpdesk (Won, 2024)', 0.87, 'Vendor L3 maintenance ~3.6% of licence TCV/yr'),
+    provenance: cite('BC-2024-012', 'Business Case - Govt Shared Services Helpdesk (Won, 2024)', 0.87, 'Vendor L3 maintenance ~3.6% of licence TCV/yr',
+      'Clause 8.2.3: The Contractor shall maintain 24x7 back-to-back support arrangements with the platform vendor for the full contract term.'),
   },
   {
     id: 'p9',
@@ -174,13 +185,15 @@ const resourceItems: ResourceItem[] = [
     id: 'r1', quoteLine: 1, team: 'Insys - Cloud - SG', role: 'Project Manager', grade: '7',
     teamCode: 'INS-CL-SG', dayRate: 980, mandaysByFY: [220, 80, 40],
     remarks: 'Programme Manager', mspoRole: 'PM-II (Project Management)',
-    provenance: cite('BC-2023-041', 'Business Case - Regional Bank Contact Centre (Won, 2023)', 0.89, 'PM 210 md in build year for comparable 500-seat rollout'),
+    provenance: cite('BC-2023-041', 'Business Case - Regional Bank Contact Centre (Won, 2023)', 0.89, 'PM 210 md in build year for comparable 500-seat rollout',
+      'Clause 5.1.1: The Contractor shall appoint a dedicated programme manager accountable for delivery across all phases of the programme.'),
   },
   {
     id: 'r2', quoteLine: 1, team: 'Insys - Cloud - SG', role: 'System Architect', grade: '8',
     teamCode: 'INS-CL-SG', dayRate: 1150, mandaysByFY: [180, 40, 20],
     remarks: 'Lead Solution Architect', mspoRole: 'ARCH-III (Architecture)',
-    provenance: cite('BC-2023-041', 'Business Case - Regional Bank Contact Centre (Won, 2023)', 0.85, 'SA 170 md build + advisory tail'),
+    provenance: cite('BC-2023-041', 'Business Case - Regional Bank Contact Centre (Won, 2023)', 0.85, 'SA 170 md build + advisory tail',
+      'Clause 5.1.2: A lead solution architect shall own the end-to-end technical design and the integration blueprint for the solution.'),
   },
   {
     id: 'r3', quoteLine: 1, team: 'MY ODC - AD - MY', role: 'Solution Consultant', grade: '6',
@@ -210,7 +223,8 @@ const resourceItems: ResourceItem[] = [
     id: 'r7', quoteLine: 2, team: 'Insys - Non-cloud - SG', role: 'Technical Engineer', grade: '4',
     teamCode: 'INS-NC-SG', dayRate: 560, mandaysByFY: [120, 440, 440],
     remarks: 'Service Desk L2', mspoRole: 'SUP-II (Support)',
-    provenance: cite('BC-2024-012', 'Business Case - Govt Shared Services Helpdesk (Won, 2024)', 0.9, 'L2 support 2 FTE for 400+ seat operation'),
+    provenance: cite('BC-2024-012', 'Business Case - Govt Shared Services Helpdesk (Won, 2024)', 0.9, 'L2 support 2 FTE for 400+ seat operation',
+      'Clause 8.1.4: The Contractor shall operate a service desk with L2 support sized for the full agent population across the contracted operating hours.'),
   },
   {
     id: 'r8', quoteLine: 2, team: 'Insys - Non-cloud - SG', role: 'Operation Manager', grade: '7',
@@ -247,12 +261,28 @@ export function buildInitialBusinessCase(): BusinessCaseState {
       projectEnd: '2029-03-31',
       currency: 'SGD',
       inflationBaseFY: 2026,
-      provenance: cite('ITT/2026/014', TENDER.title + ' - Requirement Specification', 1.0, 'Sections 1.2 Scope, 2.1 Contract Period (36 months from award)'),
+      // Per-field provenance: extracted fields cite the tender document itself;
+      // internal GTM mappings are AI inferences with no source.
+      fieldProv: {
+        crmId: { kind: 'estimate' },
+        projectName: extracted('ITT/2026/014', TENDER.title + ' - Requirement Specification', 'Cover page: "National Contact Centre Modernisation Programme"'),
+        customer: extracted('ITT/2026/014', TENDER.title + ' - Requirement Specification', 'Section 1.1: issued by the Public Service Digital Agency (Singapore)'),
+        endCustomer: extracted('ITT/2026/014', TENDER.title + ' - Requirement Specification', 'Section 1.2: services support whole-of-government contact centre operations'),
+        gtmUnit: { kind: 'estimate' },
+        gtmSubTeam: { kind: 'estimate' },
+        majorSolutionOffering: { kind: 'estimate' },
+        projectStart: extracted('ITT/2026/014', TENDER.title + ' - Requirement Specification', 'Section 2.1: Contract Period - 36 months from award, target commencement April 2026'),
+        projectEnd: extracted('ITT/2026/014', TENDER.title + ' - Requirement Specification', 'Section 2.1: Contract Period - 36 months from award'),
+        currency: extracted('ITT/2026/014', TENDER.title + ' - Requirement Specification', 'Section 9.2: all prices shall be quoted in Singapore Dollars (SGD)'),
+      },
     },
     quoteLines: [
-      { id: 1, solutionOffering: 'Contact Center Solutions', projectType: 'Milestone Based', remarks: 'Design, build & rollout', marginPct: 0.24 },
-      { id: 2, solutionOffering: 'Application Maintenance Services', projectType: 'Time Based', remarks: '36-month support & maintenance', marginPct: 0.28 },
-      { id: 3, solutionOffering: 'Security Operations (SOC)', projectType: 'Time Based', remarks: '24x7 SOC monitoring per clause 7.2', marginPct: 0.26 },
+      { id: 1, solutionOffering: 'Contact Center Solutions', projectType: 'Milestone Based', remarks: 'Design, build & rollout', marginPct: 0.24,
+        provenance: extracted('ITT/2026/014', TENDER.title + ' - Requirement Specification', 'Section 3: design, build and rollout of the modernised contact centre platform') },
+      { id: 2, solutionOffering: 'Application Maintenance Services', projectType: 'Time Based', remarks: '36-month support & maintenance', marginPct: 0.28,
+        provenance: extracted('ITT/2026/014', TENDER.title + ' - Requirement Specification', 'Section 8: application maintenance and support for the full 36-month contract term') },
+      { id: 3, solutionOffering: 'Security Operations (SOC)', projectType: 'Time Based', remarks: '24x7 SOC monitoring per clause 7.2', marginPct: 0.26,
+        provenance: extracted('ITT/2026/014', TENDER.title + ' - Requirement Specification', 'Clause 7.2: 24x7 security operations monitoring of all in-scope systems') },
     ],
     productItems,
     resourceItems,
@@ -266,6 +296,7 @@ export function buildInitialBusinessCase(): BusinessCaseState {
     fxOverrides: {},
     appliedRates: defaultAppliedRates(3),
     labourMonthly: {},
+    confirmedInputs: [],
     approvals: [],
   };
 
@@ -424,18 +455,82 @@ export function buildSeedTenders(): TenderRecord[] {
       submissionFormName: 'RFP-2025-198_Submission_Form.docx',
       submissionFilledAt: '2025-12-16T16:05:00+08:00',
     },
+    {
+      id: 't-erp',
+      ref: 'RFP/2025/166',
+      title: 'Statutory Board ERP Consolidation',
+      agency: 'Land & Estates Authority',
+      sector: 'Agency',
+      pages: 243,
+      fileName: 'RFP-2025-166_ERP_Consolidation.pdf',
+      fileSize: '21.3 MB',
+      uploadedBy: 'John Price',
+      uploadedAt: '2025-09-02T10:12:00+08:00',
+      closingDate: '2025-10-10T16:00:00+08:00',
+      processingMinutes: 19,
+      outcome: 'Won',
+      bc: pastBc('Statutory Board ERP Consolidation', 'Land & Estates Authority', 'SFDC-00814452', 0.4, 'Eng Chuan Puay'),
+      submissionFormName: 'RFP-2025-166_Form_of_Tender.docx',
+      submissionFilledAt: '2025-10-06T11:00:00+08:00',
+    },
+    {
+      id: 't-dw',
+      ref: 'ITT/2025/089',
+      title: 'Digital Workplace Refresh',
+      agency: 'Coastal Insurance Group',
+      sector: 'Commercial',
+      pages: 98,
+      fileName: 'ITT-2025-089_Digital_Workplace.pdf',
+      fileSize: '8.1 MB',
+      uploadedBy: 'John Price',
+      uploadedAt: '2025-06-14T09:30:00+08:00',
+      closingDate: '2025-07-18T16:00:00+08:00',
+      processingMinutes: 12,
+      outcome: 'Lost',
+      bc: pastBc('Digital Workplace Refresh', 'Coastal Insurance Group', 'SFDC-00798210', 0.3, 'Ethan Lim'),
+      submissionFormName: 'ITT-2025-089_Submission.docx',
+      submissionFilledAt: '2025-07-15T15:40:00+08:00',
+    },
+    {
+      id: 't-iot',
+      ref: 'RFP/2026/203',
+      title: 'Smart Facility IoT Rollout',
+      agency: 'Metro Transit Operator',
+      sector: 'Commercial',
+      pages: 154,
+      fileName: 'RFP-2026-203_IoT_Rollout.pdf',
+      fileSize: '13.9 MB',
+      uploadedBy: 'John Price',
+      uploadedAt: '2026-07-08T14:05:00+08:00',
+      closingDate: '2026-08-14T16:00:00+08:00',
+      processingMinutes: 15,
+      outcome: 'Awaiting result',
+      bc: pastBc('Smart Facility IoT Rollout', 'Metro Transit Operator', 'SFDC-00869004', 0.27, 'Eng Chuan Puay'),
+      submissionFormName: 'RFP-2026-203_Form_of_Tender.docx',
+      submissionFilledAt: '2026-08-11T10:25:00+08:00',
+    },
   ];
 }
 
 export const HISTORICAL_DOCS: HistoricalDoc[] = [
-  { id: 'BC-2023-041', title: 'Business Case - Regional Bank Contact Centre', docType: 'Business Case', sector: 'Commercial', customer: 'Meridian Bank', outcome: 'Won', uploadedBy: 'Felicia Phan', uploadDate: '2025-11-03', embeddingStatus: 'Embedded', chunks: 214, versions: 2 },
-  { id: 'BC-2024-012', title: 'Business Case - Govt Shared Services Helpdesk', docType: 'Business Case', sector: 'Agency', customer: 'Central Provident Services', outcome: 'Won', uploadedBy: 'Felicia Phan', uploadDate: '2025-12-14', embeddingStatus: 'Embedded', chunks: 187, versions: 1 },
-  { id: 'WP-2024-007', title: 'Won Proposal - Ministry Citizen Portal', docType: 'Won Proposal', sector: 'Agency', customer: 'Ministry of Community Services', outcome: 'Won', uploadedBy: 'Jessica Tan', uploadDate: '2026-01-20', embeddingStatus: 'Embedded', chunks: 402, versions: 1 },
-  { id: 'LP-2024-019', title: 'Lost Proposal - Port Authority Service Desk', docType: 'Lost Proposal', sector: 'Agency', customer: 'Harbour & Maritime Board', outcome: 'Lost', uploadedBy: 'Rimple Sulekh', uploadDate: '2026-02-02', embeddingStatus: 'Embedded', chunks: 156, versions: 1 },
-  { id: 'TD-2023-118', title: 'Tender Requirement - Statutory Board Hotline Refresh', docType: 'Tender Requirement', sector: 'Agency', customer: 'Utilities Regulatory Office', outcome: '-', uploadedBy: 'John Price', uploadDate: '2026-02-17', embeddingStatus: 'Embedded', chunks: 523, versions: 1 },
-  { id: 'BC-2022-087', title: 'Business Case - Insurer Omnichannel Platform', docType: 'Business Case', sector: 'Commercial', customer: 'Pacific Assurance Group', outcome: 'Won', uploadedBy: 'Felicia Phan', uploadDate: '2026-03-01', embeddingStatus: 'Re-embedding', chunks: 178, versions: 3 },
-  { id: 'TD-2026-031', title: 'Tender Requirement - Regional Hospital Command Centre', docType: 'Tender Requirement', sector: 'Agency', customer: 'Eastern Health Cluster', outcome: '-', uploadedBy: 'Chee Wee', uploadDate: '2026-06-11', embeddingStatus: 'Extraction failed', chunks: 0, versions: 1 },
-  { id: 'WP-2026-002', title: 'Won Proposal - Ministry Citizen Portal (duplicate upload)', docType: 'Won Proposal', sector: 'Agency', customer: 'Ministry of Community Services', outcome: 'Won', uploadedBy: 'Suriyan K', uploadDate: '2026-08-05', embeddingStatus: 'Duplicate - pending review', chunks: 0, versions: 1 },
+  { id: 'BC-2023-041', title: 'Business Case - Regional Bank Contact Centre', docType: 'Business Case', sector: 'Commercial', customer: 'Meridian Bank', outcome: 'Won', uploadedBy: 'Felicia Phan', uploadDate: '2025-11-03', embeddingStatus: 'Embedded', chunks: 214, version: '1.1', history: [
+    { v: '1.0', archivedAt: '2025-12-09', by: 'Felicia Phan', note: 'Customer: Meridian Bank Ltd -> Meridian Bank; replaced draft workbook with the final signed version' },
+  ] },
+  // Linked set: full triple (requirement + proposal + business case) for the Citizen Portal tender
+  { id: 'TD-2024-052', title: 'Tender Requirement - Ministry Citizen Portal', docType: 'Tender Requirement', sector: 'Agency', customer: 'Ministry of Community Services', outcome: '-', uploadedBy: 'Jessica Tan', uploadDate: '2026-01-20', embeddingStatus: 'Embedded', chunks: 318, version: '1.0', group: 'grp-portal' },
+  { id: 'WP-2024-007', title: 'Proposal - Ministry Citizen Portal', docType: 'Proposal', sector: 'Agency', customer: 'Ministry of Community Services', outcome: 'Won', uploadedBy: 'Jessica Tan', uploadDate: '2026-01-20', embeddingStatus: 'Embedded', chunks: 402, version: '1.0', group: 'grp-portal' },
+  { id: 'BC-2024-008', title: 'Business Case - Ministry Citizen Portal', docType: 'Business Case', sector: 'Agency', customer: 'Ministry of Community Services', outcome: 'Won', uploadedBy: 'Felicia Phan', uploadDate: '2026-01-21', embeddingStatus: 'Embedded', chunks: 196, version: '1.0', group: 'grp-portal' },
+  // Linked set: partial pair (no proposal was archived for this tender)
+  { id: 'TD-2023-104', title: 'Tender Requirement - Govt Shared Services Helpdesk', docType: 'Tender Requirement', sector: 'Agency', customer: 'Central Provident Services', outcome: '-', uploadedBy: 'John Price', uploadDate: '2025-12-12', embeddingStatus: 'Embedded', chunks: 441, version: '1.0', group: 'grp-helpdesk' },
+  { id: 'BC-2024-012', title: 'Business Case - Govt Shared Services Helpdesk', docType: 'Business Case', sector: 'Agency', customer: 'Central Provident Services', outcome: 'Won', uploadedBy: 'Felicia Phan', uploadDate: '2025-12-14', embeddingStatus: 'Embedded', chunks: 187, version: '1.0', group: 'grp-helpdesk' },
+  { id: 'LP-2024-019', title: 'Proposal - Port Authority Service Desk', docType: 'Proposal', sector: 'Agency', customer: 'Harbour & Maritime Board', outcome: 'Lost', uploadedBy: 'Rimple Sulekh', uploadDate: '2026-02-02', embeddingStatus: 'Embedded', chunks: 156, version: '1.0' },
+  { id: 'TD-2023-118', title: 'Tender Requirement - Statutory Board Hotline Refresh', docType: 'Tender Requirement', sector: 'Agency', customer: 'Utilities Regulatory Office', outcome: '-', uploadedBy: 'John Price', uploadDate: '2026-02-17', embeddingStatus: 'Embedded', chunks: 523, version: '1.0' },
+  { id: 'BC-2022-087', title: 'Business Case - Insurer Omnichannel Platform', docType: 'Business Case', sector: 'Commercial', customer: 'Pacific Assurance Group', outcome: 'Won', uploadedBy: 'Felicia Phan', uploadDate: '2026-03-01', embeddingStatus: 'Re-embedding', chunks: 178, version: '1.2', history: [
+    { v: '1.0', archivedAt: '2026-01-15', by: 'Felicia Phan', note: 'Title: Business Case - Insurer Contact Platform -> Business Case - Insurer Omnichannel Platform' },
+    { v: '1.1', archivedAt: '2026-03-01', by: 'Felicia Phan', note: 'Sector: Agency -> Commercial; customer corrected to the contracting entity' },
+  ] },
+  { id: 'TD-2026-031', title: 'Tender Requirement - Regional Hospital Command Centre', docType: 'Tender Requirement', sector: 'Agency', customer: 'Eastern Health Cluster', outcome: '-', uploadedBy: 'Chee Wee', uploadDate: '2026-06-11', embeddingStatus: 'Extraction failed', chunks: 0, version: '1.0' },
+  { id: 'WP-2026-002', title: 'Proposal - Ministry Citizen Portal (duplicate upload)', docType: 'Proposal', sector: 'Agency', customer: 'Ministry of Community Services', outcome: 'Won', uploadedBy: 'Suriyan K', uploadDate: '2026-08-05', embeddingStatus: 'Duplicate - pending review', chunks: 0, version: '1.0' },
 ];
 
 export const SEED_AUDIT: AuditEntry[] = [

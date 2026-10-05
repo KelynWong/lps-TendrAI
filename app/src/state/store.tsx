@@ -16,6 +16,7 @@ import type {
   TenderRecord,
   UserInfo,
 } from '../types';
+import type { ChangeEntry } from './draft';
 import {
   HISTORICAL_DOCS,
   SEED_AUDIT,
@@ -42,13 +43,16 @@ type Action =
   | { type: 'upload-tender'; fileName: string; sizeLabel: string; pages: number }
   | { type: 'generation-complete'; id: string }
   | { type: 'upload-submission-form'; fileName: string }
-  | { type: 'commit-bc'; bc: BusinessCaseState; summary: string }
+  | { type: 'update-submission-field'; label: string; value: string }
+  | { type: 'commit-bc'; bc: BusinessCaseState; summary: string; changes: ChangeEntry[] }
   | { type: 'submit-drb' }
   | { type: 'approve' }
   | { type: 'reject'; reason: string }
   | { type: 'mark-submitted' }
-  | { type: 'add-historical'; doc: HistoricalDoc }
-  | { type: 'update-historical'; doc: HistoricalDoc }
+  | { type: 'set-outcome'; outcome: 'Won' | 'Lost' | 'Awaiting result' }
+  | { type: 'add-historical'; docs: HistoricalDoc[]; linkedTo?: string }
+  | { type: 'update-historical'; doc: HistoricalDoc; linkedTo?: string; replacedWith?: string }
+  | { type: 'archive-historical'; id: string }
   | { type: 'historical-embedded'; id: string };
 
 // ---- Permission model (stakeholder matrix in the requirement spec) ---------
@@ -80,8 +84,8 @@ function entry(user: UserInfo, action: string, detail: string): AuditEntry {
   };
 }
 
-function entryT(user: UserInfo, action: string, detail: string, tender: string): AuditEntry {
-  return { ...entry(user, action, detail), tender };
+function entryT(user: UserInfo, action: string, detail: string, tender: string, section?: string): AuditEntry {
+  return { ...entry(user, action, detail), tender, section };
 }
 
 function titleFromFileName(name: string): string {
@@ -104,11 +108,6 @@ function reducer(state: AppState, a: Action): AppState {
   if (a.type === 'logout') return { ...state, user: null };
   if (!state.user) return state; // every other action requires a signed-in user
   const user = state.user;
-
-  const log = (action: string, detail: string): AuditEntry[] => [
-    ...state.audit,
-    entry(user, action, detail),
-  ];
 
   if (a.type === 'open-tender') return { ...state, activeTenderId: a.id };
   if (a.type === 'close-tender') return { ...state, activeTenderId: null };
@@ -166,17 +165,94 @@ function reducer(state: AppState, a: Action): AppState {
 
   // ---- Historical data store (no active tender required) -------------------
   if (a.type === 'add-historical') {
+    const group = a.docs[0]?.group;
+    const entries: AuditEntry[] = a.docs.map((doc) => ({
+      ...entry(user, 'Historical document uploaded', `${doc.id}: ${doc.title} (${doc.docType}, ${doc.sector}); embedding started`),
+      section: 'Historical data',
+    }));
+    if (group && (a.docs.length > 1 || a.linkedTo)) {
+      const ids = [...(a.linkedTo ? [a.linkedTo] : []), ...a.docs.map((d) => d.id)];
+      entries.push({
+        ...entry(user, 'Historical documents linked', `${ids.join(', ')} linked as one tender set`),
+        section: 'Historical data',
+      });
+    }
     return {
       ...state,
-      historical: [a.doc, ...state.historical],
-      audit: log('Historical document uploaded', `${a.doc.id}: ${a.doc.title} (${a.doc.docType}, ${a.doc.sector}); embedding started`),
+      historical: [
+        ...a.docs,
+        // Linking to a previously ungrouped document pulls it into the new set
+        ...state.historical.map((d) => (group && d.id === a.linkedTo ? { ...d, group } : d)),
+      ],
+      audit: [...state.audit, ...entries],
     };
   }
   if (a.type === 'update-historical') {
+    const group = a.doc.group;
+    const prev = state.historical.find((d) => d.id === a.doc.id);
+    // Archive the superseded version with a note of exactly what changed
+    const changes: string[] = [];
+    if (prev) {
+      if (prev.title !== a.doc.title) changes.push(`Title: ${prev.title} -> ${a.doc.title}`);
+      if (prev.docType !== a.doc.docType) changes.push(`Type: ${prev.docType} -> ${a.doc.docType}`);
+      if (prev.sector !== a.doc.sector) changes.push(`Sector: ${prev.sector} -> ${a.doc.sector}`);
+      if (prev.customer !== a.doc.customer) changes.push(`Customer: ${prev.customer} -> ${a.doc.customer}`);
+      if (prev.outcome !== a.doc.outcome) changes.push(`Outcome: ${prev.outcome} -> ${a.doc.outcome}`);
+      if (prev.group !== a.doc.group) changes.push(a.doc.group ? 'Linked into a tender set' : 'Unlinked from its tender set');
+    }
+    if (a.replacedWith) changes.push(`Document replaced (${a.replacedWith})`);
+    const updated: HistoricalDoc = {
+      ...a.doc,
+      history: [
+        ...(prev?.history ?? []),
+        ...(prev
+          ? [{ v: prev.version, archivedAt: new Date().toISOString().slice(0, 10), by: user.name, note: changes.join('; ') || 'Metadata edited' }]
+          : []),
+      ],
+    };
+    let historical = state.historical.map((d) => {
+      if (d.id === a.doc.id) return updated;
+      // Relinking to a previously ungrouped document pulls it into the set
+      if (group && a.linkedTo && d.id === a.linkedTo) return { ...d, group };
+      return d;
+    });
+    // A linked set carries ONE outcome: the edited document's outcome wins
+    if (group && a.doc.outcome !== '-') {
+      historical = historical.map((d) =>
+        d.id !== a.doc.id && d.group === group && d.docType !== 'Tender Requirement' && d.outcome !== a.doc.outcome
+          ? { ...d, outcome: a.doc.outcome }
+          : d,
+      );
+    }
+    const entries: AuditEntry[] = [
+      { ...entry(user, 'Historical document updated', `${a.doc.id}: metadata edited; prior version archived, re-embedding`), section: 'Historical data' },
+    ];
+    if (prev && prev.group !== a.doc.group) {
+      entries.push({
+        ...entry(
+          user,
+          a.doc.group ? 'Historical documents linked' : 'Historical document unlinked',
+          a.doc.group
+            ? `${a.doc.id} linked into a tender set${a.linkedTo ? ` with ${a.linkedTo}` : ''}`
+            : `${a.doc.id} removed from its linked tender set`,
+        ),
+        section: 'Historical data',
+      });
+    }
+    return { ...state, historical, audit: [...state.audit, ...entries] };
+  }
+  if (a.type === 'archive-historical') {
+    const doc = state.historical.find((d) => d.id === a.id);
     return {
       ...state,
-      historical: state.historical.map((d) => (d.id === a.doc.id ? a.doc : d)),
-      audit: log('Historical document updated', `${a.doc.id}: metadata edited; prior version archived, re-embedding`),
+      historical: state.historical.map((d) => (d.id === a.id ? { ...d, archived: true } : d)),
+      audit: [
+        ...state.audit,
+        {
+          ...entry(user, 'Historical document archived', `${a.id}: ${doc?.title ?? ''} removed from the library and from retrieval for new tenders; existing citations keep resolving to it`),
+          section: 'Historical data',
+        },
+      ],
     };
   }
   if (a.type === 'historical-embedded') {
@@ -196,9 +272,9 @@ function reducer(state: AppState, a: Action): AppState {
   const bc = tender.bc;
   const locked = bc.status === 'approved' || bc.status === 'submitted';
 
-  const logT = (action: string, detail: string): AuditEntry[] => [
+  const logT = (action: string, detail: string, section?: string): AuditEntry[] => [
     ...state.audit,
-    entryT(user, action, detail, tender.ref),
+    entryT(user, action, detail, tender.ref, section),
   ];
 
   const withBc = (nextBc: BusinessCaseState, audit: AuditEntry[]): AppState => ({
@@ -215,7 +291,13 @@ function reducer(state: AppState, a: Action): AppState {
   switch (a.type) {
     case 'commit-bc': {
       if (locked) return state;
-      let audit = logT('Business case saved', `Changes saved: ${a.summary}`);
+      // One audit entry per change: add / modify / delete, per tab, with values
+      let audit = [
+        ...state.audit,
+        ...(a.changes.length
+          ? a.changes.map((c) => entryT(user, c.action, c.detail, tender.ref, c.section))
+          : [entryT(user, 'Business case saved', `Changes saved: ${a.summary}`, tender.ref)]),
+      ];
       let next = a.bc;
       // Saving after a partial approval voids it (the user confirmed in the UI)
       if (bc.approvals.length > 0 && bc.approvals.length < APPROVALS_REQUIRED) {
@@ -227,16 +309,25 @@ function reducer(state: AppState, a: Action): AppState {
             'Approvals reset',
             `Saved changes voided the partial approval by ${bc.approvals.join(' and ')}; sponsors must approve again`,
             tender.ref,
+            'Workflow',
           ),
         ];
       }
       return withBc(next, audit);
     }
 
+    case 'update-submission-field':
+      return withTender(
+        { submissionOverrides: { ...tender.submissionOverrides, [a.label]: a.value } },
+        logT('Submission form field edited', a.label + ' updated before export', 'Submission Form'),
+      );
     case 'upload-submission-form':
       return withTender(
         { submissionFormName: a.fileName, submissionFilledAt: new Date().toISOString() },
-        logT('Submission form uploaded', `${a.fileName} - auto-filled from approved business case ${bc.basicInfo.crmId}`),
+        [
+          ...logT('Submission form uploaded', a.fileName, 'Submission Form'),
+          entryT(user, 'Submission form draft generated', 'Fields auto-filled from approved business case ' + bc.basicInfo.crmId + '; non-derivable fields marked for manual input', tender.ref, 'Submission Form'),
+        ],
       );
 
     case 'submit-drb':
@@ -245,6 +336,7 @@ function reducer(state: AppState, a: Action): AppState {
         logT('Submitted for DRB', `${tender.ref} business case submitted for Deal Review Board approval`),
       );
     case 'approve': {
+      if (locked) return state;
       if (bc.approvals.includes(user.name)) return state; // one vote per person
       const approvals = [...bc.approvals, user.name];
       if (approvals.length >= APPROVALS_REQUIRED) {
@@ -256,20 +348,25 @@ function reducer(state: AppState, a: Action): AppState {
             approvedBy: approvals.join(' and '),
             approvedAt: new Date().toISOString(),
           },
-          logT('Business case APPROVED', `Second approval by ${user.name}; ${tender.ref} locked from further edits and submission form enabled`),
+          logT('Business case APPROVED', `Second approval by ${user.name}; ${tender.ref} locked from further edits and submission form enabled`, 'Workflow'),
         );
       }
       return withBc(
         { ...bc, approvals },
-        logT('Approval recorded', `${user.name} approved ${tender.ref} (${approvals.length} of ${APPROVALS_REQUIRED}); saving further edits will void it`),
+        logT('Approval recorded', `${user.name} approved ${tender.ref} (${approvals.length} of ${APPROVALS_REQUIRED}); saving further edits will void it`, 'Workflow'),
       );
     }
     case 'reject':
-      return withBc({ ...bc, status: 'draft', approvals: [] }, logT('Business case rejected', a.reason));
+      return withBc({ ...bc, status: 'draft', approvals: [] }, logT('Business case rejected', a.reason, 'Workflow'));
+    case 'set-outcome':
+      return withTender(
+        { outcome: a.outcome },
+        logT('Tender outcome recorded', tender.ref + ' marked as ' + a.outcome, 'Workflow'),
+      );
     case 'mark-submitted':
       return withBc(
         { ...bc, status: 'submitted' },
-        logT('Tender submission form generated', `Prefilled form downloaded for ${tender.ref}`),
+        logT('Submission form exported', `Prefilled form downloaded for ${tender.ref}`, 'Submission Form'),
       );
     default:
       return state;

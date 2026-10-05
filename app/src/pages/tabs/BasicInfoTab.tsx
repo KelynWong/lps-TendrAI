@@ -2,6 +2,8 @@
 // add/remove), billing plan (BD can add lines), exchange rates (BD-editable
 // applied rate). All edits land on the draft until Save.
 
+import { useState } from 'react';
+import { X } from 'lucide-react';
 import type { BusinessCaseState, SummaryCategory } from '../../types';
 import {
   CONTINGENCY_PCT,
@@ -14,8 +16,9 @@ import {
 } from '../../lib/calc';
 import { money, pct } from '../../lib/format';
 import { can, useStore } from '../../state/store';
-import { useDraft } from '../../state/draft';
+import { confirmProv, useDraft } from '../../state/draft';
 import { DateCell, Fx, NumCell, ProvenanceBadge, TextCell } from '../../components/common';
+import { AddRowButton, Button, ConfirmDialog, IconButton } from '../../ui/ui';
 import {
   CURRENCIES,
   GTM_SUBTEAMS,
@@ -39,13 +42,65 @@ export default function BasicInfoTab() {
   const locked = bc.status === 'approved' || bc.status === 'submitted';
   const canEdit = !locked && (can.editProducts(user.role) || can.editResources(user.role));
   const canDeal = !locked && can.editDealStructure(user.role); // BD + sponsors
-  const canMargin = !locked && can.editRatesAndMargins(user.role);
 
+  const [removeQl, setRemoveQl] = useState<number | null>(null);
+  const [onlyReview, setOnlyReview] = useState(false);
+  const [confirmAllOpen, setConfirmAllOpen] = useState(false);
   const info = bc.basicInfo;
+
+  // AI-drafted values on this tab: deal-information fields + quote lines + billing lines
+  const fieldsToReview = Object.values(info.fieldProv).filter((p) => p.kind !== 'human').length;
+  const qlToReview = bc.quoteLines.filter((q) => q.provenance.kind !== 'human').length;
+  const billingToReview = bc.billing.filter((b) => b.provenance.kind !== 'human').length;
+  const toReview = fieldsToReview + qlToReview + billingToReview;
+  const totalItems = Object.keys(info.fieldProv).length + bc.quoteLines.length + bc.billing.length;
+  const filterOn = onlyReview && toReview > 0;
+  const visibleBilling = filterOn
+    ? bc.billing.filter((b) => b.provenance.kind !== 'human')
+    : bc.billing;
+  const visibleQls = filterOn
+    ? bc.quoteLines.filter((q) => q.provenance.kind !== 'human')
+    : bc.quoteLines;
+  const confirmAll = () =>
+    update((d) => ({
+      ...d,
+      basicInfo: {
+        ...d.basicInfo,
+        fieldProv: Object.fromEntries(
+          Object.entries(d.basicInfo.fieldProv).map(([k, p]) => [k, p.kind === 'human' ? p : confirmProv(p, user.name, false)]),
+        ),
+      },
+      quoteLines: d.quoteLines.map((q) =>
+        q.provenance.kind === 'human' ? q : { ...q, provenance: confirmProv(q.provenance, user.name, false) },
+      ),
+      billing: d.billing.map((b) =>
+        b.provenance.kind === 'human' ? b : { ...b, provenance: confirmProv(b.provenance, user.name, false) },
+      ),
+    }));
+  /** Edit one quote line field, confirming its provenance (citation kept) */
+  const patchQl = (id: number, patch: Partial<BusinessCaseState['quoteLines'][number]>) =>
+    update((d) => ({
+      ...d,
+      quoteLines: d.quoteLines.map((x) =>
+        x.id === id ? { ...x, ...patch, provenance: confirmProv(x.provenance, user.name, true) } : x,
+      ),
+    }));
+  // Editing a field confirms that field (and keeps its citation, marked edited)
   const patchInfo = (patch: Partial<BusinessCaseState['basicInfo']>) =>
     update((d) => ({
       ...d,
-      basicInfo: { ...d.basicInfo, ...patch, provenance: { kind: 'human', confirmedBy: user.name } },
+      basicInfo: {
+        ...d.basicInfo,
+        ...patch,
+        fieldProv: {
+          ...d.basicInfo.fieldProv,
+          ...Object.fromEntries(
+            Object.keys(patch)
+              .filter((k) => d.basicInfo.fieldProv[k])
+              .map((k) => [k, confirmProv(d.basicInfo.fieldProv[k], user.name, true)]),
+          ),
+        },
+      },
     }));
 
   const select = (value: string, options: string[], onChange: (v: string) => void, enabled = canEdit) =>
@@ -65,7 +120,7 @@ export default function BasicInfoTab() {
         ...d,
         quoteLines: [
           ...d.quoteLines,
-          { id, solutionOffering: SOLUTION_OFFERINGS[0], projectType: 'Milestone Based' as const, remarks: '', marginPct: 0.25 },
+          { id, solutionOffering: SOLUTION_OFFERINGS[0], projectType: 'Milestone Based' as const, remarks: '', marginPct: 0.25, provenance: { kind: 'human' as const, confirmedBy: user.name } },
         ],
         otherIndirect: {
           travelExpense: push(d.otherIndirect.travelExpense, 0),
@@ -125,12 +180,21 @@ export default function BasicInfoTab() {
       ],
     }));
 
-  const row = (label: string, control: React.ReactNode) => (
-    <div className="info-row" key={label}>
-      <label>{label}</label>
-      {control}
-    </div>
-  );
+  /** One deal-information row; provKey attaches that field's own badge. */
+  const row = (label: string, control: React.ReactNode, provKey?: string) => {
+    const prov = provKey ? info.fieldProv[provKey] : undefined;
+    // Under the needs-review filter only unconfirmed AI-filled fields remain
+    if (filterOn && (!prov || prov.kind === 'human')) return null;
+    return (
+      <div className="info-row" key={label}>
+        <label>{label}</label>
+        <span className="info-val">
+          {control}
+          {prov && <ProvenanceBadge p={prov} context={label} tab="Basic Info" />}
+        </span>
+      </div>
+    );
+  };
 
   const text = (value: string, key: keyof typeof info) => (
     <TextCell value={value} editable={canEdit} onCommit={(v) => patchInfo({ [key]: v })} />
@@ -138,22 +202,45 @@ export default function BasicInfoTab() {
 
   return (
     <div className="tab-body">
+      <div className="review-toolbar">
+        <span className="review-progress">{totalItems - toReview} of {totalItems} AI-drafted values confirmed</span>
+        {toReview > 0 && (
+          <label>
+            <input type="checkbox" checked={onlyReview} onChange={(e) => setOnlyReview(e.target.checked)} />
+            Show only items needing review
+          </label>
+        )}
+        {canEdit && toReview > 0 && (
+          <Button compact onClick={() => setConfirmAllOpen(true)}>Confirm all in this tab</Button>
+        )}
+      </div>
+      <ConfirmDialog
+        open={confirmAllOpen}
+        title={`Confirm all ${toReview} remaining AI-drafted values?`}
+        confirmLabel="Confirm all values"
+        onConfirm={() => { setConfirmAllOpen(false); confirmAll(); }}
+        onClose={() => setConfirmAllOpen(false)}
+      >
+        Every AI-filled deal-information field and AI-suggested billing line will be marked as
+        confirmed by you. Citations are kept. Only do this after reviewing the values.
+      </ConfirmDialog>
+      {(!filterOn || fieldsToReview > 0) && (
       <section>
-        <h3>I. Basic Deal Information <ProvenanceBadge p={info.provenance} /></h3>
+        <h3>I. Basic Deal Information</h3>
         <div className="info-grid">
           <div className="info-col">
-            {row('SFDC CRM ID', text(info.crmId, 'crmId'))}
-            {row('Customer', text(info.customer, 'customer'))}
-            {row('End Customer', text(info.endCustomer, 'endCustomer'))}
+            {row('SFDC CRM ID', text(info.crmId, 'crmId'), 'crmId')}
+            {row('Customer', text(info.customer, 'customer'), 'customer')}
+            {row('End Customer', text(info.endCustomer, 'endCustomer'), 'endCustomer')}
             {row('GTM Unit', select(info.gtmUnit, withCurrent(info.gtmUnit, GTM_UNITS), (v) =>
               patchInfo({ gtmUnit: v, gtmSubTeam: (GTM_SUBTEAMS[v] ?? [''])[0] }),
-            ))}
+            ), 'gtmUnit')}
             {row('GTM Sub-team', select(info.gtmSubTeam, withCurrent(info.gtmSubTeam, GTM_SUBTEAMS[info.gtmUnit] ?? []), (v) =>
               patchInfo({ gtmSubTeam: v }),
-            ))}
+            ), 'gtmSubTeam')}
             {row('Major Solution Offering', select(info.majorSolutionOffering, withCurrent(info.majorSolutionOffering, SOLUTION_OFFERINGS), (v) =>
               patchInfo({ majorSolutionOffering: v }),
-            ))}
+            ), 'majorSolutionOffering')}
             {row('TCV (Quote Currency)', (
               <Fx f={'= Summary! TCV Total\n= Σ quote-line sell prices\n  (Working: Direct Cost × (1 + Margin %))'}>
                 <span className="computed strong">{money(s.total.tcv)}</span>
@@ -161,19 +248,19 @@ export default function BasicInfoTab() {
             ))}
           </div>
           <div className="info-col">
-            {row('Project Name', text(info.projectName, 'projectName'))}
+            {row('Project Name', text(info.projectName, 'projectName'), 'projectName')}
             {row('Project Start Date', (
               <DateCell value={info.projectStart} editable={canEdit} onCommit={(v) => patchInfo({ projectStart: v })} />
-            ))}
+            ), 'projectStart')}
             {row('Project End Date', (
               <DateCell value={info.projectEnd} editable={canEdit} onCommit={(v) => patchInfo({ projectEnd: v })} />
-            ))}
+            ), 'projectEnd')}
             {row('Project Duration (months)', (
               <Fx f={'= DATEDIF(Project Start, Project End, "m") + 1\nDrives the Cash Flow timeline and the\nLabour Inputs monthly grid.'}>
                 <span className="computed">{s.durationMonths}</span>
               </Fx>
             ))}
-            {row('Quote Currency', select(info.currency, CURRENCIES.map(([code]) => code), (v) => patchInfo({ currency: v })))}
+            {row('Quote Currency', select(info.currency, CURRENCIES.map(([code]) => code), (v) => patchInfo({ currency: v })), 'currency')}
             {row('Inflation Base Fiscal Year', (
               <NumCell
                 value={info.inflationBaseFY}
@@ -190,101 +277,81 @@ export default function BasicInfoTab() {
           </div>
         </div>
       </section>
+      )}
 
+      {(!filterOn || qlToReview > 0) && (
       <section>
         <h3>II. Quote Lines (Sub-projects)</h3>
         <table className="grid">
           <thead>
             <tr>
-              <th>Quote Line</th><th>Solution Offering</th><th>Project Type</th><th>Remarks</th>
-              <th className="num">Margin % {canMargin ? '' : '(exec only)'}</th>
-              <th className="num"><Fx f={'= Working! Σ category sell prices\n= Direct Cost × (1 + Margin %)'}>TCV</Fx></th>
-              <th className="num"><Fx f={'= Summary! EBITDA(QL) ÷ TCV(QL)'}>EBITDA %</Fx></th>
+              <th>Quote Line</th><th>Solution Offering</th><th>Project Type</th><th>Remarks</th><th>Source</th>
               {canDeal && <th />}
             </tr>
           </thead>
           <tbody>
-            {bc.quoteLines.map((q, i) => (
+            {visibleQls.map((q) => (
               <tr key={q.id}>
                 <td>Quote Line {q.id}</td>
                 <td>
                   {select(q.solutionOffering, withCurrent(q.solutionOffering, SOLUTION_OFFERINGS), (v) =>
-                    update((d) => ({ ...d, quoteLines: d.quoteLines.map((x) => (x.id === q.id ? { ...x, solutionOffering: v } : x)) })),
+                    patchQl(q.id, { solutionOffering: v }),
                   )}
                 </td>
                 <td>
                   {select(q.projectType, [...PROJECT_TYPES], (v) =>
-                    update((d) => ({ ...d, quoteLines: d.quoteLines.map((x) => (x.id === q.id ? { ...x, projectType: v as typeof q.projectType } : x)) })),
+                    patchQl(q.id, { projectType: v as typeof q.projectType }),
                   )}
                 </td>
                 <td className="muted">
                   <TextCell
                     value={q.remarks}
                     editable={canEdit}
-                    onCommit={(v) => update((d) => ({ ...d, quoteLines: d.quoteLines.map((x) => (x.id === q.id ? { ...x, remarks: v } : x)) }))}
+                    onCommit={(v) => patchQl(q.id, { remarks: v })}
                   />
                 </td>
-                <td className="num">
-                  <NumCell
-                    value={+(q.marginPct * 100).toFixed(1)}
-                    editable={canMargin}
-                    format={(v) => `${v.toFixed(1)}%`}
-                    onCommit={(v) => update((d) => ({ ...d, quoteLines: d.quoteLines.map((x) => (x.id === q.id ? { ...x, marginPct: v / 100 } : x)) }))}
-                  />
-                </td>
-                <td className="num">{money(s.perLine[i].tcv)}</td>
-                <td className="num">{pct(s.perLine[i].ebitdaPct)}</td>
+                <td><ProvenanceBadge p={q.provenance} context={`Quote Line ${q.id}: ${q.solutionOffering}`} tab="Basic Info" /></td>
                 {canDeal && (
                   <td>
-                    <button
-                      className="icon-btn"
-                      title="Remove quote line (also removes its product and labour lines)"
-                      onClick={() => removeQuoteLine(q.id)}
-                    >
-                      ✕
-                    </button>
+                    <IconButton danger label="Remove quote line" icon={X} onClick={() => setRemoveQl(q.id)} />
                   </td>
                 )}
               </tr>
             ))}
+          {canDeal && (
+            <AddRowButton colSpan={5 + (canDeal ? 1 : 0)} label="Add quote line" onClick={addQuoteLine} />
+          )}
           </tbody>
-          <tfoot>
-            <tr>
-              <td colSpan={5}>Total</td>
-              <td className="num">{money(s.total.tcv)}</td>
-              <td className="num">{pct(s.total.ebitdaPct)}</td>
-              {canDeal && <td />}
-            </tr>
-          </tfoot>
         </table>
-        {canDeal && <button className="btn" onClick={addQuoteLine}>+ Add quote line</button>}
       </section>
+      )}
 
+      {(!filterOn || billingToReview > 0) && (
       <section>
         <h3>III. Billing Plan</h3>
         <table className="grid">
           <thead>
             <tr>
               <th>Target Billing Date</th><th>Payment Schedule</th>
-              <th className="num">Billing Amount</th><th>Source</th>
+              <th className="num">Billing Amount</th><th>Remarks</th><th>Source</th>
               {canDeal && <th />}
             </tr>
           </thead>
           <tbody>
-            {bc.billing.map((b) => (
+            {visibleBilling.map((b) => (
               <tr key={b.id}>
                 <td>
                   <DateCell
                     value={b.date}
                     editable={canEdit}
-                    onCommit={(v) => update((d) => ({ ...d, billing: d.billing.map((x) => (x.id === b.id ? { ...x, date: v, provenance: { kind: 'human', confirmedBy: user.name } } : x)) }))}
+                    onCommit={(v) => update((d) => ({ ...d, billing: d.billing.map((x) => (x.id === b.id ? { ...x, date: v, provenance: confirmProv(x.provenance, user.name, true) } : x)) }))}
                   />
                 </td>
                 <td>
                   <TextCell
                     value={b.schedule}
                     editable={canEdit}
-                    onCommit={(v) => update((d) => ({ ...d, billing: d.billing.map((x) => (x.id === b.id ? { ...x, schedule: v, provenance: { kind: 'human', confirmedBy: user.name } } : x)) }))}
+                    onCommit={(v) => update((d) => ({ ...d, billing: d.billing.map((x) => (x.id === b.id ? { ...x, schedule: v, provenance: confirmProv(x.provenance, user.name, true) } : x)) }))}
                   />
                 </td>
                 <td className="num">
@@ -292,19 +359,27 @@ export default function BasicInfoTab() {
                     value={b.amount}
                     editable={canEdit}
                     format={(v) => money(v)}
-                    onCommit={(v) => update((d) => ({ ...d, billing: d.billing.map((x) => (x.id === b.id ? { ...x, amount: v, provenance: { kind: 'human', confirmedBy: user.name } } : x)) }))}
+                    onCommit={(v) => update((d) => ({ ...d, billing: d.billing.map((x) => (x.id === b.id ? { ...x, amount: v, provenance: confirmProv(x.provenance, user.name, true) } : x)) }))}
                   />
                 </td>
-                <td><ProvenanceBadge p={b.provenance} /></td>
+                <td>
+                  <TextCell
+                    value={b.remarks}
+                    editable={canEdit}
+                    onCommit={(v) => update((d) => ({ ...d, billing: d.billing.map((x) => (x.id === b.id ? { ...x, remarks: v, provenance: confirmProv(x.provenance, user.name, true) } : x)) }))}
+                  />
+                </td>
+                <td><ProvenanceBadge p={b.provenance} tab="Basic Info" /></td>
                 {canDeal && (
                   <td>
-                    <button className="icon-btn" title="Remove milestone" onClick={() => update((d) => ({ ...d, billing: d.billing.filter((x) => x.id !== b.id) }))}>
-                      ✕
-                    </button>
+                    <IconButton danger label="Remove billing line" icon={X} onClick={() => update((d) => ({ ...d, billing: d.billing.filter((x) => x.id !== b.id) }))} />
                   </td>
                 )}
               </tr>
             ))}
+          {canDeal && (
+            <AddRowButton colSpan={5 + (canDeal ? 1 : 0)} label="Add billing line" onClick={addBilling} />
+          )}
           </tbody>
           <tfoot>
             <tr>
@@ -313,13 +388,14 @@ export default function BasicInfoTab() {
                 {Math.abs(s.billingTotal - s.total.tcv) >= 1 && <span className="warn-inline">WARNING: Total Billing Amount ≠ TCV</span>}
               </td>
               <td className="num">{money(s.billingTotal)}</td>
-              <td colSpan={canDeal ? 2 : 1} />
+              <td colSpan={canDeal ? 3 : 2} />
             </tr>
           </tfoot>
         </table>
-        {canDeal && <button className="btn" onClick={addBilling}>+ Add billing line</button>}
       </section>
+      )}
 
+      {!filterOn && (
       <section>
         <h3>IV. Exchange Rate</h3>
         <table className="grid narrow">
@@ -348,6 +424,18 @@ export default function BasicInfoTab() {
           </tbody>
         </table>
       </section>
+      )}
+      <ConfirmDialog
+        open={removeQl !== null}
+        title={`Remove Quote Line ${removeQl}?`}
+        confirmLabel="Remove quote line"
+        danger
+        onConfirm={() => { if (removeQl !== null) removeQuoteLine(removeQl); setRemoveQl(null); }}
+        onClose={() => setRemoveQl(null)}
+      >
+        This also removes every product and labour line item assigned to this quote line.
+        The change stays in your draft until you select Save changes.
+      </ConfirmDialog>
     </div>
   );
 }

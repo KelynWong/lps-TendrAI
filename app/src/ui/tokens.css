@@ -1,0 +1,105 @@
+/* ---------------------------------------------------------------------------
+   LPS-P2C design tokens.
+   Brand sampled from lpstech.com / LPS logo; semantic colours are reserved
+   strictly for status and are always paired with an icon + text label.
+   --------------------------------------------------------------------------- */
+
+:root {
+  /* Brand */
+  --brand-purple: #7a1a7f;
+  --brand-purple-hover: #5f1264;
+  --brand-purple-pressed: #480e4c;
+  --brand-purple-subtle: #f6e8f7;
+  --brand-magenta: #a100b5; /* login screen only */
+
+  /* Neutrals */
+  --ink: #1a1a1a;
+  --ink-secondary: #5a5a5a;
+  --ink-disabled: #9a9a9a;
+  --surface: #ffffff;
+  --surface-subtle: #f5f5f5;
+  --surface-sunken: #efefef;
+  --border: #d9d9d9;
+  --border-strong: #8c8c8c;
+
+  /* Semantic (status only, never decoration) */
+  --success: #1e7b3a;
+  --success-tint: #e7f3eb;
+  --warning: #b26a00;
+  --warning-tint: #fdf2e2;
+  --error: #c62828;
+  --error-tint: #fcebea;
+  --info: #0f62fe;
+  --info-tint: #e8f0fe;
+
+  /* Spacing (4px base) */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-12: 48px;
+
+  /* Type scale */
+  --fs-body: 14px;
+  --fs-dense: 13px;
+  --fs-label: 12px; /* minimum anywhere in the UI */
+  --fs-h3: 16px;
+  --fs-h2: 20px;
+  --fs-h1: 24px;
+
+  /* Shape & focus */
+  --radius: 4px;
+  --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--brand-purple);
+
+  /* Layout heights (used to compute sticky offsets) */
+  --topbar-h: 52px;
+  --bc-bar-h: 56px; /* sticky business-case summary bar */
+  --bc-tabs-h: 42px; /* sticky sub-tab strip */
+
+  /* Dark tooltip surface */
+  --tip-bg: #211027;
+
+  font-family: Inter, 'Segoe UI', system-ui, -apple-system, Arial, sans-serif;
+  color: var(--ink);
+  font-size: var(--fs-body);
+}
+
+/* -------- night mode (existing toggle preserved) -------------------------- */
+:root[data-theme='dark'] {
+  --brand-purple: #c78bd0;
+  --brand-purple-hover: #d9a9e0;
+  --brand-purple-pressed: #b06fbc;
+  --brand-purple-subtle: #32203a;
+
+  --ink: #e6e6e6;
+  --ink-secondary: #a8a8a8;
+  --ink-disabled: #6f6f6f;
+  --surface: #161616;
+  --surface-subtle: #1f1f1f;
+  --surface-sunken: #262626;
+  --border: #393939;
+  --border-strong: #6f6f6f;
+
+  --success: #42be65;
+  --success-tint: #123a1e;
+  --warning: #f1c21b;
+  --warning-tint: #3a2f0a;
+  --error: #ff8389;
+  --error-tint: #3b1619;
+  --info: #78a9ff;
+  --info-tint: #16233c;
+
+  --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--brand-purple);
+  --tip-bg: #0a0a0a;
+}
+
+/* -------- motion ----------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

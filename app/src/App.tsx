@@ -1,24 +1,39 @@
-import { useEffect, useState } from 'react';
+/* eslint-disable react-refresh/only-export-components */
+import { createContext, useEffect, useState } from 'react';
+import { ChevronDown, Moon, Sun } from 'lucide-react';
 import { StoreProvider, useStore } from './state/store';
+import { ToastProvider } from './ui/toast';
 import DashboardPage from './pages/DashboardPage';
-
 import TendersPage from './pages/TendersPage';
-
 import HistoricalPage from './pages/HistoricalPage';
 import AuditPage from './pages/AuditPage';
 import LoginPage from './pages/LoginPage';
 
+export interface AuditPrefill {
+  tender?: string;
+  section?: string;
+}
+
+/** Cross-page navigation for deep links (e.g. Edit history -> filtered Audit log) */
+export const NavCtx = createContext<{ goToAudit: (p: AuditPrefill) => void }>({ goToAudit: () => {} });
+
 const NAV = [
   { key: 'dashboard', label: 'Dashboard' },
   { key: 'tenders', label: 'Tenders' },
-  { key: 'historical', label: 'Historical Data' },
-  { key: 'audit', label: 'Audit Trail' },
+  { key: 'historical', label: 'Historical data' },
+  { key: 'audit', label: 'Audit log' },
 ];
+
+/** Swap this for the real SVG lockup when supplied. */
+function BrandLogo() {
+  return <img src="/lps-logo-horizontal.png" alt="LPS - a Lenovo company" className="brand-logo" />;
+}
 
 function Shell() {
   const { state, dispatch } = useStore();
   const [page, setPage] = useState('dashboard');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [auditPrefill, setAuditPrefill] = useState<AuditPrefill | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     try {
       return localStorage.getItem('tendrai-theme') === 'dark' ? 'dark' : 'light';
@@ -35,19 +50,20 @@ function Shell() {
     }
   }, [theme]);
 
+  const goToAudit = (p: AuditPrefill) => { setAuditPrefill({ ...p }); setPage('audit'); };
+
   if (!state.user) return <LoginPage />;
   const user = state.user;
   const initials = user.name.split(' ').map((p) => p[0]).slice(0, 2).join('');
 
   return (
+    <NavCtx.Provider value={{ goToAudit }}>
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <img src="/lps-logo-horizontal.png" alt="LPS - a Lenovo company" className="brand-logo" />
-          <span className="brand-divider" />
-          <span className="brand-name">TendrAI</span>
+          <BrandLogo />
         </div>
-        <nav>
+        <nav aria-label="Main">
           {NAV.map((n) => (
             <button key={n.key} className={page === n.key ? 'active' : ''} onClick={() => setPage(n.key)}>
               {n.label}
@@ -55,13 +71,18 @@ function Shell() {
           ))}
         </nav>
         <div className="user-menu">
-          <button className="user-chip" onClick={() => setMenuOpen((v) => !v)}>
-            <span className="avatar">{initials}</span>
+          <button
+            className="user-chip"
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+          >
+            <span className="avatar" aria-hidden>{initials}</span>
             <span className="user-chip-text">
               <b>{user.name}</b>
               <span>{user.roleLabel}</span>
             </span>
-            <span className="caret">▾</span>
+            <span className="caret" aria-hidden><ChevronDown size={14} /></span>
           </button>
           {menuOpen && (
             <div className="user-dropdown" onMouseLeave={() => setMenuOpen(false)}>
@@ -79,28 +100,30 @@ function Shell() {
         <button
           className="theme-toggle"
           title={theme === 'dark' ? 'Switch to light mode' : 'Switch to night mode'}
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to night mode'}
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
         >
-          {theme === 'dark' ? '☀' : '☾'}
+          {theme === 'dark' ? <Sun size={16} aria-hidden /> : <Moon size={16} aria-hidden />}
         </button>
       </header>
       <main>
         {page === 'dashboard' && <DashboardPage goTo={setPage} />}
         {page === 'tenders' && <TendersPage />}
         {page === 'historical' && <HistoricalPage />}
-        {page === 'audit' && <AuditPage />}
+        {page === 'audit' && <AuditPage prefill={auditPrefill} />}
       </main>
-      <footer className="footer muted small">
-        © 2026 Lenovo PCCW Solutions · TendrAI
-      </footer>
+      <footer className="footer muted small">© 2026 Lenovo PCCW Solutions</footer>
     </div>
+    </NavCtx.Provider>
   );
 }
 
 export default function App() {
   return (
     <StoreProvider>
-      <Shell />
+      <ToastProvider>
+        <Shell />
+      </ToastProvider>
     </StoreProvider>
   );
 }

@@ -3,11 +3,15 @@
 // quantity AND cost are broken down per FY with totals (no inflation columns -
 // inflation lives on the Summary tab's applied-% rows).
 
+import { useState } from 'react';
+import { X } from 'lucide-react';
 import { fyLabel, productItemCost, productItemTotal, sum } from '../../lib/calc';
 import { money } from '../../lib/format';
 import { can, useStore } from '../../state/store';
-import { useDraft } from '../../state/draft';
+import { confirmProv, useDraft } from '../../state/draft';
 import { Fx, NumCell, ProvenanceBadge, TextCell } from '../../components/common';
+import { AddRowButton, Button, ConfirmDialog, IconButton } from '../../ui/ui';
+import { useToast } from '../../ui/toast';
 import type { Category, ProductItem } from '../../types';
 import { FY_COUNT, PRODUCT_CATEGORIES } from '../../types';
 
@@ -17,15 +21,35 @@ export default function ProductPlanTab() {
   const { state } = useStore();
   const { bc, update } = useDraft();
   const user = state.user!;
+  const toast = useToast();
   const locked = bc.status === 'approved' || bc.status === 'submitted';
   const editable = !locked && can.editProducts(user.role);
   const baseFY = bc.basicInfo.inflationBaseFY;
+  const [onlyReview, setOnlyReview] = useState(false);
+  const [confirmAllOpen, setConfirmAllOpen] = useState(false);
+
+  const confirmed = bc.productItems.filter((p) => p.provenance.kind === 'human').length;
+  const totalItems = bc.productItems.length;
+  const toReview = totalItems - confirmed;
+  const filterOn = onlyReview && toReview > 0;
+  const visibleItems = filterOn
+    ? bc.productItems.filter((p) => p.provenance.kind !== 'human')
+    : bc.productItems;
+
+  // Confirm-all and edits KEEP any citation; edits are flagged as changed
+  const confirmAll = () =>
+    update((d) => ({
+      ...d,
+      productItems: d.productItems.map((p) =>
+        p.provenance.kind === 'human' ? p : { ...p, provenance: confirmProv(p.provenance, user.name, false) },
+      ),
+    }));
 
   const upd = (item: ProductItem) =>
     update((d) => ({
       ...d,
       productItems: d.productItems.map((p) =>
-        p.id === item.id ? { ...item, provenance: { kind: 'human', confirmedBy: user.name } } : p,
+        p.id === item.id ? { ...item, provenance: confirmProv(item.provenance, user.name, true) } : p,
       ),
     }));
 
@@ -49,8 +73,10 @@ export default function ProductPlanTab() {
       ],
     }));
 
-  const removeRow = (id: string) =>
+  const removeRow = (id: string) => {
     update((d) => ({ ...d, productItems: d.productItems.filter((p) => p.id !== id) }));
+    toast.push('info', 'Line item removed', 'Use Discard in the save bar to restore unsaved removals.');
+  };
 
   const qlById = (id: number) => bc.quoteLines.find((q) => q.id === id);
   const fyIdx = Array.from({ length: FY_COUNT }, (_, i) => i);
@@ -59,17 +85,40 @@ export default function ProductPlanTab() {
   const grand = sum(bc.productItems.map(productItemTotal));
 
   return (
-    <div className="tab-body scroll-x">
-      <table className="grid wide">
+    <div className="tab-body">
+      <div className="review-toolbar">
+        <span className="review-progress">{confirmed} of {totalItems} line items confirmed</span>
+        {toReview > 0 && (
+          <label>
+            <input type="checkbox" checked={onlyReview} onChange={(e) => setOnlyReview(e.target.checked)} />
+            Show only items needing review
+          </label>
+        )}
+        {editable && toReview > 0 && (
+          <Button compact onClick={() => setConfirmAllOpen(true)}>Confirm all in this tab</Button>
+        )}
+      </div>
+      <ConfirmDialog
+        open={confirmAllOpen}
+        title={`Confirm all ${totalItems - confirmed} remaining line items?`}
+        confirmLabel="Confirm all line items"
+        onConfirm={() => { setConfirmAllOpen(false); confirmAll(); }}
+        onClose={() => setConfirmAllOpen(false)}
+      >
+        Every AI-suggested line item in this tab will be marked as confirmed by you.
+        Only do this after reviewing the figures.
+      </ConfirmDialog>
+      <div className="scroll-x">
+      <table className="grid wide sticky-first">
         <thead>
           <tr>
             <th rowSpan={2}>QL</th>
             <th rowSpan={2}><Fx f={'= the Solution Offering of the selected\nQuote Line (Basic Info section II).\nPicking an offering reassigns the line.'}>Solution Offering</Fx></th>
             <th rowSpan={2}>Category</th>
             <th rowSpan={2}>Commodity / Service Description</th>
-            <th rowSpan={2}>Vendor</th>
             <th rowSpan={2} title="No inflation applied if Vendor Commitment = Yes">Commit</th>
             <th rowSpan={2} className="num">Unit Cost</th>
+            <th rowSpan={2}>Remarks</th>
             <th colSpan={FY_COUNT + 1} className="num group-th">Quantity</th>
             <th colSpan={FY_COUNT + 1} className="num group-th">Total Cost</th>
             <th rowSpan={2}>Source</th>
@@ -87,7 +136,7 @@ export default function ProductPlanTab() {
           </tr>
         </thead>
         <tbody>
-          {bc.productItems.map((it) => {
+          {visibleItems.map((it) => {
             const costs = productItemCost(it);
             return (
               <tr key={it.id}>
@@ -118,9 +167,7 @@ export default function ProductPlanTab() {
                 </td>
                 <td className="desc">
                   <TextCell value={it.description} editable={editable} onCommit={(v) => upd({ ...it, description: v })} />
-                  {it.remarks && <div className="muted small">{it.remarks}</div>}
                 </td>
-                <td><TextCell value={it.vendor} editable={editable} onCommit={(v) => upd({ ...it, vendor: v })} /></td>
                 <td>
                   {editable ? (
                     <input
@@ -132,6 +179,9 @@ export default function ProductPlanTab() {
                 </td>
                 <td className="num">
                   <NumCell value={it.unitCost} editable={editable} format={(v) => money(v)} onCommit={(v) => upd({ ...it, unitCost: v })} />
+                </td>
+                <td className="desc">
+                  <TextCell value={it.remarks} editable={editable} onCommit={(v) => upd({ ...it, remarks: v })} />
                 </td>
                 {it.qtyByFY.map((q, i) => (
                   <td className="num" key={`q${i}`}>
@@ -151,15 +201,22 @@ export default function ProductPlanTab() {
                   <td className="num muted" key={`c${i}`}>{money(c)}</td>
                 ))}
                 <td className="num strong">{money(productItemTotal(it))}</td>
-                <td><ProvenanceBadge p={it.provenance} /></td>
+                <td><ProvenanceBadge p={it.provenance} context={it.description} tab="Product Plan" /></td>
                 {editable && (
                   <td>
-                    <button className="icon-btn" title="Remove line" onClick={() => removeRow(it.id)}>✕</button>
+                    <IconButton danger label="Remove line item" icon={X} onClick={() => removeRow(it.id)} />
                   </td>
                 )}
               </tr>
             );
           })}
+          {editable && (
+            <AddRowButton
+              colSpan={7 + (FY_COUNT + 1) * 2 + 2}
+              label="Add line item"
+              onClick={addRow}
+            />
+          )}
         </tbody>
         <tfoot>
           <tr>
@@ -176,7 +233,7 @@ export default function ProductPlanTab() {
           </tr>
         </tfoot>
       </table>
-      {editable && <button className="btn" onClick={addRow}>+ Add line item</button>}
+      </div>
     </div>
   );
 }

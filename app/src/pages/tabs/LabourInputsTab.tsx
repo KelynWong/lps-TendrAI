@@ -12,10 +12,12 @@ import {
   resourceItemTotal,
   sum,
 } from '../../lib/calc';
+import { useState } from 'react';
 import { money } from '../../lib/format';
 import { can, useStore } from '../../state/store';
-import { useDraft } from '../../state/draft';
+import { confirmInput, useDraft } from '../../state/draft';
 import { Fx, NumCell, TextCell } from '../../components/common';
+import { Button, ConfirmDialog } from '../../ui/ui';
 
 export default function LabourInputsTab() {
   const { state } = useStore();
@@ -31,6 +33,30 @@ export default function LabourInputsTab() {
   const locked = bc.status === 'approved' || bc.status === 'submitted';
   const editable = !locked && can.editResources(user.role);
 
+  const [onlyReview, setOnlyReview] = useState(false);
+  const [confirmAllOpen, setConfirmAllOpen] = useState(false);
+  // A line is verified once it has a manual monthly distribution; until then
+  // the months are the automatic even spread (an estimate).
+  const lineVerified = (id: string) => !!bc.labourMonthly[id];
+  const verifiedCount = bc.resourceItems.filter((r) => lineVerified(r.id)).length;
+  const totalLines = bc.resourceItems.length;
+  const toReview = totalLines - verifiedCount;
+  const filterOn = onlyReview && toReview > 0;
+  const cellVerified = (id: string, i: number) => bc.confirmedInputs.includes(`lab:${id}:${i}`);
+
+  const confirmAll = () =>
+    update((d) => {
+      const labourMonthly = { ...d.labourMonthly };
+      let confirmedInputs = d.confirmedInputs;
+      for (const r of d.resourceItems) {
+        if (!labourMonthly[r.id]) labourMonthly[r.id] = monthlyMandaysFor(d, r, duration);
+        confirmedInputs = labourMonthly[r.id]
+          .map((_, i) => `lab:${r.id}:${i}`)
+          .reduce(confirmInput, confirmedInputs);
+      }
+      return { ...d, labourMonthly, confirmedInputs };
+    });
+
   const setMonth = (resourceId: string, monthIdx: number, v: number) =>
     update((d) => {
       const item = d.resourceItems.find((r) => r.id === resourceId);
@@ -42,6 +68,8 @@ export default function LabourInputsTab() {
         ...d,
         labourMonthly: { ...d.labourMonthly, [resourceId]: months },
         resourceItems: d.resourceItems.map((r) => (r.id === resourceId ? { ...r, mandaysByFY } : r)),
+        // Only the edited month cell turns green
+        confirmedInputs: confirmInput(d.confirmedInputs, `lab:${resourceId}:${monthIdx}`),
       };
     });
 
@@ -57,9 +85,32 @@ export default function LabourInputsTab() {
     m.forEach((v, i) => (totalsByMonth[i] += v));
     return { r, m };
   });
+  const visibleRows = filterOn ? rows.filter(({ r }) => !lineVerified(r.id)) : rows;
 
   return (
     <div className="tab-body">
+      <div className="review-toolbar">
+        <span className="review-progress">{verifiedCount} of {totalLines} monthly distributions verified</span>
+        {toReview > 0 && (
+          <label>
+            <input type="checkbox" checked={onlyReview} onChange={(e) => setOnlyReview(e.target.checked)} />
+            Show only rows needing review
+          </label>
+        )}
+        {editable && toReview > 0 && (
+          <Button compact onClick={() => setConfirmAllOpen(true)}>Confirm all in this tab</Button>
+        )}
+      </div>
+      <ConfirmDialog
+        open={confirmAllOpen}
+        title={`Confirm all ${totalLines - verifiedCount} remaining monthly distributions?`}
+        confirmLabel="Confirm all distributions"
+        onConfirm={() => { setConfirmAllOpen(false); confirmAll(); }}
+        onClose={() => setConfirmAllOpen(false)}
+      >
+        The current even monthly spread of each remaining line will be kept as its verified
+        distribution. Only do this after reviewing the phasing.
+      </ConfirmDialog>
       <div className="scroll-x">
         <table className="grid tiny">
           <thead>
@@ -73,7 +124,7 @@ export default function LabourInputsTab() {
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ r, m }) => (
+            {visibleRows.map(({ r, m }) => (
               <tr key={r.id}>
                 <td>
                   <TextCell
@@ -91,7 +142,7 @@ export default function LabourInputsTab() {
                 </td>
                 <td className="num" title={`Grade ${r.grade}`}>{r.dayRate.toLocaleString()}</td>
                 {m.map((v, i) => (
-                  <td className="num muted" key={i}>
+                  <td className={`num rate-cell ${cellVerified(r.id, i) ? 'verified' : ''}`} key={i}>
                     <NumCell
                       value={Math.round(v * 10) / 10}
                       editable={editable}
