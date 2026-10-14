@@ -9,6 +9,7 @@
 import { createContext, useContext, useMemo, useReducer } from 'react';
 import type { ReactNode } from 'react';
 import type {
+  AppConfig,
   AuditEntry,
   BusinessCaseState,
   HistoricalDoc,
@@ -18,14 +19,16 @@ import type {
 } from '../types';
 import type { ChangeEntry } from './draft';
 import {
+  DEFAULT_CONFIG,
   HISTORICAL_DOCS,
   SEED_AUDIT,
   buildGeneratedBusinessCase,
   buildSeedTenders,
 } from '../data/fixtures';
 
-/** Distinct DRB approvals required to lock a business case */
-export const APPROVALS_REQUIRED = 2;
+/** Distinct DRB approvals required to lock a business case
+ *  (Eng Chuan Puay, Thomas Low and Ethan Lim) */
+export const APPROVALS_REQUIRED = 3;
 
 export interface AppState {
   user: UserInfo | null; // null = not signed in
@@ -33,6 +36,8 @@ export interface AppState {
   activeTenderId: string | null;
   audit: AuditEntry[];
   historical: HistoricalDoc[];
+  /** Admin-configurable lists and defaults */
+  config: AppConfig;
 }
 
 type Action =
@@ -40,7 +45,7 @@ type Action =
   | { type: 'logout' }
   | { type: 'open-tender'; id: string }
   | { type: 'close-tender' }
-  | { type: 'upload-tender'; fileName: string; sizeLabel: string; pages: number }
+  | { type: 'upload-tender'; files: string[]; sizeLabel: string; pages: number; tenderType: string }
   | { type: 'generation-complete'; id: string }
   | { type: 'upload-submission-form'; fileName: string }
   | { type: 'update-submission-field'; label: string; value: string }
@@ -49,7 +54,8 @@ type Action =
   | { type: 'approve' }
   | { type: 'reject'; reason: string }
   | { type: 'mark-submitted' }
-  | { type: 'set-outcome'; outcome: 'Won' | 'Lost' | 'Awaiting result' }
+  | { type: 'set-outcome'; outcome: string }
+  | { type: 'update-config'; patch: Partial<AppConfig>; note: string }
   | { type: 'add-historical'; docs: HistoricalDoc[]; linkedTo?: string }
   | { type: 'update-historical'; doc: HistoricalDoc; linkedTo?: string; replacedWith?: string }
   | { type: 'archive-historical'; id: string }
@@ -58,18 +64,18 @@ type Action =
 // ---- Permission model (stakeholder matrix in the requirement spec) ---------
 
 export const can = {
-  editProducts: (r: Role) =>
-    ['executive-sponsor', 'business-sponsor', 'presales', 'bd-team'].includes(r),
-  editResources: (r: Role) =>
-    ['executive-sponsor', 'business-sponsor', 'delivery', 'bd-team'].includes(r),
-  editRatesAndMargins: (r: Role) => r === 'executive-sponsor',
-  /** BD maintains deal structure: quote lines, billing plan, FX rates, vendor columns */
-  editDealStructure: (r: Role) =>
-    ['executive-sponsor', 'business-sponsor', 'bd-team'].includes(r),
+  // ONLY Business Development edits the business case; every other role is
+  // read-only there (sponsors approve, the Bidding Manager uploads).
+  editProducts: (r: Role) => r === 'bd-team',
+  editResources: (r: Role) => r === 'bd-team',
+  editRatesAndMargins: (r: Role) => r === 'bd-team',
+  editDealStructure: (r: Role) => r === 'bd-team',
   approve: (r: Role) => ['executive-sponsor', 'business-sponsor'].includes(r),
   uploadTender: (r: Role) => r === 'bidding-manager',
   submitForDrb: (r: Role) => r === 'bidding-manager',
   downloadMspo: (r: Role) => ['bd-team', 'executive-sponsor', 'business-sponsor'].includes(r),
+  /** Administrator console: configurable lists, defaults, failed processing */
+  admin: (r: Role) => r === 'admin',
 };
 
 let auditSeq = 100;
@@ -117,12 +123,13 @@ function reducer(state: AppState, a: Action): AppState {
     const t: TenderRecord = {
       id: `t-${Date.now()}`,
       ref: `ITT/2026/0${n}`,
-      title: titleFromFileName(a.fileName),
+      title: titleFromFileName(a.files[0] ?? 'tender'),
       agency: 'To be confirmed from tender document',
-      sector: 'Agency',
+      sector: a.tenderType,
       pages: a.pages,
-      fileName: a.fileName,
+      fileName: a.files[0] ?? '',
       fileSize: a.sizeLabel,
+      files: a.files,
       uploadedBy: user.name,
       uploadedAt: new Date().toISOString(),
       closingDate: new Date(Date.now() + 28 * 86400000).toISOString(),
@@ -135,7 +142,12 @@ function reducer(state: AppState, a: Action): AppState {
       activeTenderId: t.id,
       audit: [
         ...state.audit,
-        entryT(user, 'Tender uploaded', `${a.fileName} (${a.sizeLabel}, ~${a.pages} pages) uploaded; processing started`, t.ref),
+        entryT(
+          user,
+          'Tender uploaded',
+          `${a.files.length} document${a.files.length > 1 ? 's' : ''} (${a.files.join(', ')}; ${a.sizeLabel}, ~${a.pages} pages) uploaded; processing started`,
+          t.ref,
+        ),
       ],
     };
   }
@@ -143,10 +155,21 @@ function reducer(state: AppState, a: Action): AppState {
   if (a.type === 'generation-complete') {
     const t = state.tenders.find((x) => x.id === a.id);
     if (!t || t.bc) return state;
+    // New business cases pick up the admin-configured defaults
+    const gen = buildGeneratedBusinessCase(t.title);
+    const bcWithDefaults: BusinessCaseState = {
+      ...gen,
+      fxOverrides: { ...state.config.fxDefaults },
+      gradeRateOverrides: { ...state.config.gradeRates },
+      resourceItems: gen.resourceItems.map((r) => ({
+        ...r,
+        dayRate: state.config.gradeRates[r.grade] ?? r.dayRate,
+      })),
+    };
     return {
       ...state,
       tenders: state.tenders.map((x) =>
-        x.id === a.id ? { ...x, bc: buildGeneratedBusinessCase(t.title) } : x,
+        x.id === a.id ? { ...x, bc: bcWithDefaults } : x,
       ),
       audit: [
         ...state.audit,
@@ -240,6 +263,17 @@ function reducer(state: AppState, a: Action): AppState {
       });
     }
     return { ...state, historical, audit: [...state.audit, ...entries] };
+  }
+  if (a.type === 'update-config') {
+    if (user.role !== 'admin') return state; // Administrator only
+    return {
+      ...state,
+      config: { ...state.config, ...a.patch },
+      audit: [
+        ...state.audit,
+        { ...entry(user, 'Configuration updated', a.note), section: 'Admin' },
+      ],
+    };
   }
   if (a.type === 'archive-historical') {
     const doc = state.historical.find((d) => d.id === a.id);
@@ -379,6 +413,7 @@ const initial: AppState = {
   activeTenderId: null,
   audit: SEED_AUDIT,
   historical: HISTORICAL_DOCS,
+  config: DEFAULT_CONFIG,
 };
 
 const Ctx = createContext<{ state: AppState; dispatch: React.Dispatch<Action> } | null>(null);
@@ -408,4 +443,9 @@ export function useBc(): BusinessCaseState {
   const t = useTender();
   if (!t.bc) throw new Error('business case not generated yet');
   return t.bc;
+}
+
+/** Admin-configurable lists and defaults */
+export function useConfig(): AppConfig {
+  return useStore().state.config;
 }

@@ -7,20 +7,21 @@ import { useState } from 'react';
 import { X } from 'lucide-react';
 import { fyLabel, resourceItemCost, resourceItemTotal, sum, MANDAY_PER_MONTH } from '../../lib/calc';
 import { money } from '../../lib/format';
-import { can, useStore } from '../../state/store';
+import { can, useConfig, useStore } from '../../state/store';
 import { confirmProv, useDraft } from '../../state/draft';
 import { Fx, NumCell, ProvenanceBadge, TextCell } from '../../components/common';
 import { AddRowButton, Button, ConfirmDialog, IconButton } from '../../ui/ui';
 import { useToast } from '../../ui/toast';
 import type { ResourceItem } from '../../types';
 import { FY_COUNT } from '../../types';
-import { GRADES, ROLES, TEAMS, withCurrent } from '../../data/parameters';
+import { GRADES, GRADE_RATES, TEAMS, withCurrent } from '../../data/parameters';
 
 let newSeq = 1;
 
 export default function ResourcePlanTab() {
   const { state } = useStore();
   const { bc, update } = useDraft();
+  const config = useConfig();
   const user = state.user!;
   const toast = useToast();
   const locked = bc.status === 'approved' || bc.status === 'submitted';
@@ -29,6 +30,17 @@ export default function ResourcePlanTab() {
   const baseFY = bc.basicInfo.inflationBaseFY;
   const [onlyReview, setOnlyReview] = useState(false);
   const [confirmAllOpen, setConfirmAllOpen] = useState(false);
+
+  /** iRate depends on grade only (role is irrelevant); overrides win */
+  const rateFor = (grade: string) => bc.gradeRateOverrides[grade] ?? GRADE_RATES[grade] ?? 0;
+
+  /** Editing a grade's rate updates the card AND every line of that grade */
+  const setGradeRate = (grade: string, v: number) =>
+    update((d) => ({
+      ...d,
+      gradeRateOverrides: { ...d.gradeRateOverrides, [grade]: v },
+      resourceItems: d.resourceItems.map((r) => (r.grade === grade ? { ...r, dayRate: v } : r)),
+    }));
 
   const confirmed = bc.resourceItems.filter((r) => r.provenance.kind === 'human').length;
   const totalItems = bc.resourceItems.length;
@@ -71,11 +83,11 @@ export default function ResourcePlanTab() {
         {
           id: `rn${newSeq++}-${Date.now()}`,
           quoteLine: d.quoteLines[0]?.id ?? 1,
-          team: TEAMS[0],
-          role: ROLES[0],
+          team: config.teams[0] ?? TEAMS[0],
+          role: config.roles[0] ?? 'New role',
           grade: '4',
           teamCode: 'INS-CL-SG',
-          dayRate: 600,
+          dayRate: bc.gradeRateOverrides['4'] ?? GRADE_RATES['4'],
           mandaysByFY: new Array(FY_COUNT).fill(0),
           remarks: '',
           mspoRole: 'CONS-II (Consulting)',
@@ -180,9 +192,9 @@ export default function ResourcePlanTab() {
                     qlById(it.quoteLine)?.solutionOffering ?? '-'
                   )}
                 </td>
-                <td>{sel(it.team, withCurrent(it.team, TEAMS), (v) => upd({ ...it, team: v }))}</td>
-                <td>{sel(it.role, withCurrent(it.role, ROLES), (v) => upd({ ...it, role: v }))}</td>
-                <td>{sel(it.grade, withCurrent(it.grade, GRADES), (v) => upd({ ...it, grade: v }))}</td>
+                <td>{sel(it.team, withCurrent(it.team, config.teams), (v) => upd({ ...it, team: v }))}</td>
+                <td>{sel(it.role, withCurrent(it.role, config.roles), (v) => upd({ ...it, role: v }))}</td>
+                <td>{sel(it.grade, withCurrent(it.grade, GRADES), (v) => upd({ ...it, grade: v, dayRate: rateFor(v) }))}</td>
                 <td className="num">
                   <NumCell value={it.dayRate} editable={canRates} title={canRates ? undefined : "Only the Executive Sponsor can modify day rates"} format={(v) => money(v)} onCommit={(v) => upd({ ...it, dayRate: v })} />
                 </td>
@@ -242,6 +254,38 @@ export default function ResourcePlanTab() {
         </tfoot>
       </table>
       </div>
+
+      {/* Rate card: iRate by grade, like Basic Info's exchange-rate table */}
+      <section>
+        <h3>Day Rate by Grade (iRate)</h3>
+        <p className="muted small">
+          The day rate depends on the Lenovo band/grade only, never the role. Changing a line's
+          grade applies the rate below; editing an applied rate updates every line of that grade.
+        </p>
+        <table className="grid narrow">
+          <thead>
+            <tr>
+              <th>Lenovo band</th>
+              <th className="num">Applied Day Rate (SEA)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {GRADES.map((g) => (
+              <tr key={g}>
+                <td>Band {g}</td>
+                <td className="num">
+                  <NumCell
+                    value={rateFor(g)}
+                    editable={editable}
+                    format={(v) => v.toLocaleString()}
+                    onCommit={(v) => setGradeRate(g, v)}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
     </div>
   );
 }

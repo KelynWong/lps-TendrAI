@@ -38,6 +38,9 @@ export interface GroundedCitation {
 export type Provenance =
   | { kind: 'grounded'; citation: GroundedCitation }
   | { kind: 'estimate' } // industry best-practice estimate, unverified, no citation
+  /** Not AI-populated: must be keyed in manually from an external system that
+   *  is out of integration scope (e.g. Salesforce) */
+  | { kind: 'manual'; source?: string }
   | {
       kind: 'human';
       confirmedBy: string;
@@ -134,7 +137,24 @@ export type Role =
   | 'bidding-manager'
   | 'presales'
   | 'delivery'
-  | 'bd-team';
+  | 'bd-team'
+  | 'admin';
+
+/** Admin-configurable lists and defaults (Admin page) */
+export interface AppConfig {
+  /** Tender types (formerly "sector"): Agency, Commercial, ... */
+  tenderTypes: string[];
+  /** Outcome/status values recordable on a tender */
+  outcomeTypes: string[];
+  /** Business case dropdown values */
+  solutionOfferings: string[];
+  roles: string[];
+  teams: string[];
+  /** Default applied FX rate per currency code for NEW business cases */
+  fxDefaults: Record<string, number>;
+  /** Default day rate (iRate) per grade for NEW business cases */
+  gradeRates: Record<string, number>;
+}
 
 export interface UserInfo {
   name: string;
@@ -205,11 +225,19 @@ export interface BusinessCaseState {
   productItems: ProductItem[];
   resourceItems: ResourceItem[];
   billing: BillingMilestone[];
+  /** Billing cadence: regenerating lines spreads the TCV evenly across the
+   *  project duration at this interval */
+  billingFrequency: 'Monthly' | 'Quarterly' | 'Yearly';
   otherIndirect: OtherIndirect;
+  /** Free-text remarks for the Summary tab (DRB notes) */
+  summaryRemarks: string;
   /** Named vendor-payment columns in Cash Flow (BD-editable; one amount per month) */
   vendorCols: VendorColumn[];
   /** Overrides of the planning exchange rates (code → applied rate to 1 USD) */
   fxOverrides: Record<string, number>;
+  /** Overrides of the default day rate (iRate) per grade; editing one updates
+   *  every resource line of that grade */
+  gradeRateOverrides: Record<string, number>;
   /** Editable applied percentages per quote line (Summary yellow cells) */
   appliedRates: AppliedRates;
   /** Editable Finance Cost % of TCV (Summary total column); when unset the
@@ -236,15 +264,18 @@ export interface TenderRecord {
   ref: string;
   title: string;
   agency: string;
-  sector: 'Agency' | 'Commercial';
+  /** Tender type (admin-configurable list; historically "sector") */
+  sector: string;
   pages: number;
   fileName: string;
   fileSize: string;
+  /** Uploaded requirement documents, in the user-chosen reading order */
+  files?: string[];
   uploadedBy: string;
   uploadedAt: string; // ISO
   closingDate: string; // ISO
   processingMinutes: number;
-  outcome?: 'Won' | 'Lost' | 'Awaiting result';
+  outcome?: string;
   /** null while the generation pipeline is still running */
   bc: BusinessCaseState | null;
   /** customer-issued submission form uploaded by the user (after approval) */

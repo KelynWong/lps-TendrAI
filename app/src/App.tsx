@@ -1,12 +1,13 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useEffect, useState } from 'react';
-import { ChevronDown, Moon, Sun } from 'lucide-react';
+import { ChevronDown, Moon, Settings, Sun } from 'lucide-react';
 import { StoreProvider, useStore } from './state/store';
 import { ToastProvider } from './ui/toast';
 import DashboardPage from './pages/DashboardPage';
 import TendersPage from './pages/TendersPage';
 import HistoricalPage from './pages/HistoricalPage';
 import AuditPage from './pages/AuditPage';
+import AdminPage from './pages/AdminPage';
 import LoginPage from './pages/LoginPage';
 
 export interface AuditPrefill {
@@ -97,6 +98,16 @@ function Shell() {
             </div>
           )}
         </div>
+        {user.role === 'admin' && (
+          <button
+            className={`theme-toggle ${page === 'admin' ? 'active' : ''}`}
+            title="Admin console"
+            aria-label="Admin console"
+            onClick={() => setPage('admin')}
+          >
+            <Settings size={16} aria-hidden />
+          </button>
+        )}
         <button
           className="theme-toggle"
           title={theme === 'dark' ? 'Switch to light mode' : 'Switch to night mode'}
@@ -111,6 +122,7 @@ function Shell() {
         {page === 'tenders' && <TendersPage />}
         {page === 'historical' && <HistoricalPage />}
         {page === 'audit' && <AuditPage prefill={auditPrefill} />}
+        {page === 'admin' && user.role === 'admin' && <AdminPage />}
       </main>
       <footer className="footer muted small">© 2026 Lenovo PCCW Solutions</footer>
     </div>

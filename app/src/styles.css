@@ -92,6 +92,7 @@ button:focus-visible, input:focus-visible, select:focus-visible,
   height: 40px; padding: 0 var(--sp-4); border-radius: var(--radius);
   font: inherit; font-size: var(--fs-body); font-weight: 600; cursor: pointer;
   border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink);
+  white-space: nowrap; line-height: 1.2; /* never wrap/overflow the fixed height */
 }
 .btn:hover { background: var(--surface-subtle); }
 .btn:disabled { color: var(--ink-disabled); border-color: var(--border); cursor: not-allowed; background: var(--surface); }
@@ -223,6 +224,32 @@ table.grid tbody tr:hover td { background: var(--surface-subtle); }
 /* Sortable headers */
 .sort-th { cursor: pointer; user-select: none; white-space: nowrap; }
 .sort-th:hover { color: var(--brand-purple); }
+
+/* Excel-style column filter (funnel beside the sort arrow) */
+.colfilter-btn {
+  background: none; border: none; cursor: pointer; padding: 2px; margin-left: 2px;
+  color: var(--ink-disabled); vertical-align: middle; border-radius: var(--radius);
+}
+.colfilter-btn:hover { color: var(--brand-purple); }
+.colfilter-btn.on { color: var(--brand-purple); background: var(--brand-purple-subtle); }
+.colfilter-pop {
+  position: fixed; z-index: 120; width: 232px;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25); padding: var(--sp-2);
+  font-size: var(--fs-dense); font-weight: 400; text-transform: none; letter-spacing: 0; cursor: default;
+}
+.colfilter-pop input[type="search"] {
+  width: 100%; padding: 5px 8px; font: inherit; margin-bottom: var(--sp-2);
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  background: var(--surface); color: var(--ink);
+}
+.colfilter-list { max-height: 200px; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+.colfilter-list label {
+  display: flex; align-items: center; gap: 7px; padding: 3px 4px; cursor: pointer;
+  color: var(--ink); border-radius: var(--radius); white-space: normal;
+}
+.colfilter-list label:hover { background: var(--surface-subtle); }
+.colfilter-actions { display: flex; justify-content: space-between; gap: var(--sp-2); margin-top: var(--sp-2); }
 .sort-arrow { margin-left: 5px; font-size: 10px; color: var(--ink-disabled); }
 .sort-arrow.on { color: var(--brand-purple); }
 
@@ -259,6 +286,8 @@ table.grid tbody tr:hover td { background: var(--surface-subtle); }
 .badge-ai { background: var(--surface); color: var(--ink-secondary); border: 1px dotted var(--border-strong); }
 .badge-estimate { background: var(--warning-tint); color: var(--warning); border: 1px dashed var(--warning); }
 .badge-human { background: var(--success-tint); color: var(--success); border: 1px solid var(--success); }
+/* Manual entry from an unintegrated external system (e.g. Salesforce) */
+.badge-manual { background: var(--surface); color: var(--ink-secondary); border: 1px dotted var(--border-strong); }
 /* Confirmed values that KEEP their citation (clickable, underlined like Cited) */
 .badge-cited-confirmed {
   background: var(--success-tint); color: var(--success); border: 1px solid var(--success);
@@ -647,6 +676,57 @@ th .fx { border-bottom-color: var(--border-strong); }
 .hd-doc-row input:disabled { color: var(--ink-disabled); background: var(--surface-subtle); }
 .hd-doc-row > button { margin-bottom: 5px; }
 .hd-link-note { display: flex; align-items: center; gap: 6px; margin: var(--sp-2) 0; }
+.billing-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; }
+.billing-head h3 { margin-bottom: 0; }
+
+/* Multi-file tender upload: staged files in reading order */
+.upload-stage { margin-top: var(--sp-3); }
+.stage-files { list-style: none; margin: var(--sp-2) 0; padding: 0; }
+.stage-files li {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: 6px 4px; border-bottom: 1px dashed var(--border);
+}
+.stage-files li:last-child { border-bottom: 0; }
+.stage-files .stage-idx {
+  width: 20px; height: 20px; border-radius: 50%; flex: none;
+  background: var(--brand-purple-subtle); color: var(--brand-purple);
+  font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+.stage-files .stage-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stage-files.readonly li { padding: 3px 0; border-bottom: 0; }
+.upload-stage .form-actions { align-items: flex-end; }
+
+/* Expandable tender rows (uploaded documents) */
+.expand-cell { width: 34px; }
+.expand-btn {
+  background: none; border: 1px solid var(--border); border-radius: var(--radius);
+  width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--ink-secondary);
+}
+.expand-btn:hover { color: var(--brand-purple); border-color: var(--brand-purple); }
+.expand-row td { background: var(--surface-subtle); }
+
+/* Dashboard overview cards */
+.kpi-won { border-left: 3px solid var(--success); min-width: 210px; }
+.kpi-won > span { display: inline-flex; align-items: center; gap: 5px; }
+.kpi-won b { font-size: 18px; }
+
+/* Admin console */
+.admin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: var(--sp-4); align-items: start; }
+.admin-card h3 { margin-top: 0; }
+.admin-card .grid { width: 100%; min-width: 0; }
+.admin-wide { grid-column: 1 / -1; }
+.admin-scroll { max-height: 280px; overflow: auto; margin-bottom: var(--sp-2); }
+
+/* Summary tab remarks */
+.summary-remarks { margin-top: var(--sp-4); }
+.summary-remarks textarea {
+  width: 100%; min-height: 84px; padding: var(--sp-2) var(--sp-3); font: inherit; font-size: var(--fs-dense);
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  background: var(--surface); color: var(--ink); resize: vertical;
+}
+.summary-remarks textarea:disabled { background: var(--surface-subtle); color: var(--ink-secondary); }
 .hd-link-note svg { flex: 0 0 auto; color: var(--brand-purple); }
 
 /* Vertical add-column slot in Cash Flow (between vendor columns and Internal Labour) */

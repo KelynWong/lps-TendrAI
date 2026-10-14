@@ -15,7 +15,7 @@ import {
   computeSummary,
 } from '../../lib/calc';
 import { money, pct } from '../../lib/format';
-import { can, useStore } from '../../state/store';
+import { can, useConfig, useStore } from '../../state/store';
 import { confirmProv, useDraft } from '../../state/draft';
 import { DateCell, Fx, NumCell, ProvenanceBadge, TextCell } from '../../components/common';
 import { AddRowButton, Button, ConfirmDialog, IconButton } from '../../ui/ui';
@@ -24,7 +24,6 @@ import {
   GTM_SUBTEAMS,
   GTM_UNITS,
   PROJECT_TYPES,
-  SOLUTION_OFFERINGS,
   withCurrent,
 } from '../../data/parameters';
 
@@ -37,6 +36,7 @@ const mapRec = (
 export default function BasicInfoTab() {
   const { state } = useStore();
   const { bc, update } = useDraft();
+  const config = useConfig();
   const user = state.user!;
   const s = computeSummary(bc);
   const locked = bc.status === 'approved' || bc.status === 'submitted';
@@ -56,6 +56,9 @@ export default function BasicInfoTab() {
   const billingToReview = bc.billing.filter((b) => b.provenance.kind !== 'human').length;
   const toReview = fieldsToReview + qlToReview + billingToReview;
   const totalItems = Object.keys(info.fieldProv).length + bc.quoteLines.length + bc.billing.length;
+  // Manual (Salesforce) fields cannot be blanket-confirmed: they must be typed
+  const manualPending = Object.values(info.fieldProv).filter((p) => p.kind === 'manual').length;
+  const aiToReview = toReview - manualPending;
   const filterOn = onlyReview && toReview > 0;
   const visibleBilling = filterOn
     ? bc.billing.filter((b) => b.provenance.kind !== 'human')
@@ -69,7 +72,10 @@ export default function BasicInfoTab() {
       basicInfo: {
         ...d.basicInfo,
         fieldProv: Object.fromEntries(
-          Object.entries(d.basicInfo.fieldProv).map(([k, p]) => [k, p.kind === 'human' ? p : confirmProv(p, user.name, false)]),
+          Object.entries(d.basicInfo.fieldProv).map(([k, p]) => [
+            k,
+            p.kind === 'human' || p.kind === 'manual' ? p : confirmProv(p, user.name, false),
+          ]),
         ),
       },
       quoteLines: d.quoteLines.map((q) =>
@@ -122,7 +128,7 @@ export default function BasicInfoTab() {
         ...d,
         quoteLines: [
           ...d.quoteLines,
-          { id, solutionOffering: SOLUTION_OFFERINGS[0], projectType: 'Milestone Based' as const, remarks: '', marginPct: 0.25, provenance: { kind: 'human' as const, confirmedBy: user.name } },
+          { id, solutionOffering: config.solutionOfferings[0] ?? 'New offering', projectType: 'Milestone Based' as const, remarks: '', marginPct: 0.25, provenance: { kind: 'human' as const, confirmedBy: user.name } },
         ],
         otherIndirect: {
           travelExpense: push(d.otherIndirect.travelExpense, 0),
@@ -166,21 +172,67 @@ export default function BasicInfoTab() {
       };
     });
 
+  // ---- Billing plan: TCV divided evenly across the billing lines -----------
+  const FREQ_MONTHS = { Monthly: 1, Quarterly: 3, Yearly: 12 } as const;
+
+  const addMonthsIso = (iso: string, m: number) => {
+    const d0 = new Date(iso);
+    return new Date(d0.getFullYear(), d0.getMonth() + m, 1).toISOString().slice(0, 10);
+  };
+
+  /** Spread the TCV evenly over the lines (the last line absorbs rounding) */
+  const divideEvenly = (lines: BusinessCaseState['billing'], tcv: number) => {
+    if (!lines.length) return lines;
+    const base = Math.floor(tcv / lines.length);
+    return lines.map((b, i) => ({
+      ...b,
+      amount: i === lines.length - 1 ? tcv - base * (lines.length - 1) : base,
+    }));
+  };
+
+  /** Changing the cadence regenerates the lines over the project duration */
+  const setFrequency = (freq: BusinessCaseState['billingFrequency']) =>
+    update((d) => {
+      const sNow = computeSummary(d);
+      const per = FREQ_MONTHS[freq];
+      const count = Math.max(1, Math.ceil(sNow.durationMonths / per));
+      const start = new Date(d.basicInfo.projectStart);
+      const lines = Array.from({ length: count }, (_, i) => ({
+        id: `b${Date.now()}-${i}`,
+        date: new Date(start.getFullYear(), start.getMonth() + i * per, 1).toISOString().slice(0, 10),
+        schedule: `${freq} billing ${i + 1} of ${count}`,
+        amount: 0,
+        remarks: '',
+        provenance: { kind: 'human' as const, confirmedBy: user.name },
+      }));
+      return { ...d, billingFrequency: freq, billing: divideEvenly(lines, Math.round(sNow.total.tcv)) };
+    });
+
+  /** Adding a line re-divides the TCV equally across all lines */
   const addBilling = () =>
-    update((d) => ({
-      ...d,
-      billing: [
+    update((d) => {
+      const sNow = computeSummary(d);
+      const last = d.billing[d.billing.length - 1];
+      const lines = [
         ...d.billing,
         {
           id: `b${Date.now()}`,
-          date: new Date().toISOString().slice(0, 10),
-          schedule: 'New billing milestone',
+          date: last ? addMonthsIso(last.date, FREQ_MONTHS[d.billingFrequency]) : d.basicInfo.projectStart,
+          schedule: `${d.billingFrequency} billing ${d.billing.length + 1}`,
           amount: 0,
           remarks: '',
-          provenance: { kind: 'human', confirmedBy: user.name },
+          provenance: { kind: 'human' as const, confirmedBy: user.name },
         },
-      ],
-    }));
+      ];
+      return { ...d, billing: divideEvenly(lines, Math.round(sNow.total.tcv)) };
+    });
+
+  /** Removing a line re-divides the TCV equally across the remaining lines */
+  const removeBilling = (id: string) =>
+    update((d) => {
+      const sNow = computeSummary(d);
+      return { ...d, billing: divideEvenly(d.billing.filter((x) => x.id !== id), Math.round(sNow.total.tcv)) };
+    });
 
   /** One deal-information row; provKey attaches that field's own badge. */
   const row = (label: string, control: React.ReactNode, provKey?: string) => {
@@ -212,19 +264,21 @@ export default function BasicInfoTab() {
             Show only items needing review
           </label>
         )}
-        {canEdit && toReview > 0 && (
+        {canEdit && aiToReview > 0 && (
           <Button compact onClick={() => setConfirmAllOpen(true)}>Confirm all in this tab</Button>
         )}
       </div>
       <ConfirmDialog
         open={confirmAllOpen}
-        title={`Confirm all ${toReview} remaining AI-drafted values?`}
+        title={`Confirm all ${aiToReview} remaining AI-drafted values?`}
         confirmLabel="Confirm all values"
         onConfirm={() => { setConfirmAllOpen(false); confirmAll(); }}
         onClose={() => setConfirmAllOpen(false)}
       >
-        Every AI-filled deal-information field and AI-suggested billing line will be marked as
-        confirmed by you. Citations are kept. Only do this after reviewing the values.
+        Every AI-filled deal-information field, quote line and billing line will be marked as
+        confirmed by you. Citations are kept.
+        {manualPending > 0 && ` ${manualPending} Manual (Salesforce) field${manualPending > 1 ? 's are' : ' is'} skipped: those must be keyed in by hand.`}
+        {' '}Only do this after reviewing the values.
       </ConfirmDialog>
       {(!filterOn || fieldsToReview > 0) && (
       <section>
@@ -240,7 +294,7 @@ export default function BasicInfoTab() {
             {row('GTM Sub-team', select(info.gtmSubTeam, withCurrent(info.gtmSubTeam, GTM_SUBTEAMS[info.gtmUnit] ?? []), (v) =>
               patchInfo({ gtmSubTeam: v }),
             ), 'gtmSubTeam')}
-            {row('Major Solution Offering', select(info.majorSolutionOffering, withCurrent(info.majorSolutionOffering, SOLUTION_OFFERINGS), (v) =>
+            {row('Major Solution Offering', select(info.majorSolutionOffering, withCurrent(info.majorSolutionOffering, config.solutionOfferings), (v) =>
               patchInfo({ majorSolutionOffering: v }),
             ), 'majorSolutionOffering')}
             {row('TCV (Quote Currency)', (
@@ -296,7 +350,7 @@ export default function BasicInfoTab() {
               <tr key={q.id}>
                 <td>Quote Line {q.id}</td>
                 <td>
-                  {select(q.solutionOffering, withCurrent(q.solutionOffering, SOLUTION_OFFERINGS), (v) =>
+                  {select(q.solutionOffering, withCurrent(q.solutionOffering, config.solutionOfferings), (v) =>
                     patchQl(q.id, { solutionOffering: v }),
                   )}
                 </td>
@@ -330,7 +384,22 @@ export default function BasicInfoTab() {
 
       {(!filterOn || billingToReview > 0) && (
       <section>
-        <h3>III. Billing Plan</h3>
+        <div className="billing-head">
+          <h3>III. Billing Plan</h3>
+          <label className="outcome-picker">
+            Billing frequency
+            <select
+              value={bc.billingFrequency}
+              disabled={!canDeal}
+              title={canDeal ? 'Regenerates the billing lines: the TCV is divided evenly across the project duration' : 'Business Development and the Sponsors set the billing frequency'}
+              onChange={(e) => setFrequency(e.target.value as BusinessCaseState['billingFrequency'])}
+            >
+              <option>Monthly</option>
+              <option>Quarterly</option>
+              <option>Yearly</option>
+            </select>
+          </label>
+        </div>
         <table className="grid">
           <thead>
             <tr>
@@ -374,7 +443,7 @@ export default function BasicInfoTab() {
                 <td><ProvenanceBadge p={b.provenance} tab="Basic Info" /></td>
                 {canDeal && (
                   <td>
-                    <IconButton danger label="Remove billing line" icon={X} onClick={() => update((d) => ({ ...d, billing: d.billing.filter((x) => x.id !== b.id) }))} />
+                    <IconButton danger label="Remove billing line (re-divides the TCV across the rest)" icon={X} onClick={() => removeBilling(b.id)} />
                   </td>
                 )}
               </tr>

@@ -4,7 +4,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ts } from '../lib/format';
 import { useStore } from '../state/store';
-import { Pager, SortTh, usePager, useSort } from '../components/common';
+import { Pager, SortTh, useColFilters, usePager, useSort } from '../components/common';
+import type { AuditEntry } from '../types';
 import { Button } from '../ui/ui';
 import type { AuditPrefill } from '../App';
 
@@ -39,16 +40,32 @@ export default function AuditPage({ prefill }: { prefill?: AuditPrefill | null }
   );
 
   const { sort, toggle, apply } = useSort({ key: 'ts', dir: -1 }); // newest first
-
-  const filtered0 = state.audit.filter((e) => {
-    if (action && e.action !== action) return false;
-    if (tender && e.tender !== tender) return false;
-    if (section && e.section !== section) return false;
-    const day = e.ts.slice(0, 10);
-    if (from && day < from) return false;
-    if (to && day > to) return false;
-    return true;
+  const cf = useColFilters();
+  const colAccessors = {
+    user: (e: AuditEntry) => e.user,
+    role: (e: AuditEntry) => e.role,
+    tender: (e: AuditEntry) => e.tender ?? '-',
+    section: (e: AuditEntry) => e.section ?? '-',
+    action: (e: AuditEntry) => e.action,
+  };
+  const fcol = (k: keyof typeof colAccessors) => ({
+    filterValues: state.audit.map((e) => String(colAccessors[k](e))),
+    filter: cf.filters[k],
+    onFilter: (f: Parameters<typeof cf.set>[1]) => cf.set(k, f),
   });
+
+  const filtered0 = cf.apply(
+    state.audit.filter((e) => {
+      if (action && e.action !== action) return false;
+      if (tender && e.tender !== tender) return false;
+      if (section && e.section !== section) return false;
+      const day = e.ts.slice(0, 10);
+      if (from && day < from) return false;
+      if (to && day > to) return false;
+      return true;
+    }),
+    colAccessors,
+  );
   const entries = apply(filtered0, {
     ts: (e) => e.ts,
     user: (e) => e.user,
@@ -102,11 +119,11 @@ export default function AuditPage({ prefill }: { prefill?: AuditPrefill | null }
         <thead>
           <tr>
             <SortTh label="Timestamp" k="ts" sort={sort} onToggle={toggle} />
-            <SortTh label="User" k="user" sort={sort} onToggle={toggle} />
-            <SortTh label="Role" k="role" sort={sort} onToggle={toggle} />
-            <SortTh label="Tender" k="tender" sort={sort} onToggle={toggle} />
-            <SortTh label="Section" k="section" sort={sort} onToggle={toggle} />
-            <SortTh label="Action" k="action" sort={sort} onToggle={toggle} />
+            <SortTh label="User" k="user" sort={sort} onToggle={toggle} {...fcol('user')} />
+            <SortTh label="Role" k="role" sort={sort} onToggle={toggle} {...fcol('role')} />
+            <SortTh label="Tender" k="tender" sort={sort} onToggle={toggle} {...fcol('tender')} />
+            <SortTh label="Section" k="section" sort={sort} onToggle={toggle} {...fcol('section')} />
+            <SortTh label="Action" k="action" sort={sort} onToggle={toggle} {...fcol('action')} />
             <th>Detail</th>
           </tr>
         </thead>

@@ -276,6 +276,16 @@ export default function SummaryTab() {
         </tbody>
       </table>
       </div>
+
+      <section className="summary-remarks">
+        <h3>Remarks</h3>
+        <textarea
+          value={bc.summaryRemarks}
+          disabled={!canDeal}
+          placeholder="Notes for the DRB about this summary (assumptions, pricing rationale, risks)"
+          onChange={(e) => update((d) => ({ ...d, summaryRemarks: e.target.value }))}
+        />
+      </section>
     </div>
   );
 }

@@ -93,6 +93,19 @@ export const ROLES = [
 
 export const GRADES = ['3', '4', '5', '6', '7', '8', '9', '10'];
 
+/** Default day rate (iRate) per Lenovo band/grade, SEA rate card.
+ *  The rate depends on grade only, never on the role. */
+export const GRADE_RATES: Record<string, number> = {
+  '3': 210,
+  '4': 261,
+  '5': 309,
+  '6': 447,
+  '7': 526,
+  '8': 631,
+  '9': 1892,
+  '10': 3978,
+};
+
 export const TEAMS = [
   'Insys - Cloud - SG',
   'Insys - Non-cloud - SG',

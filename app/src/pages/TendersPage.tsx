@@ -3,14 +3,14 @@
 // Business Case. The flow ends at DRB approval; the outcome (Awaiting result /
 // Won / Lost) is recorded manually once the case is approved.
 
-import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, ArrowLeft, CheckCircle2, Circle, FileUp, Inbox, Loader2 } from 'lucide-react';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import { AlertTriangle, ArrowDown, ArrowLeft, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, Circle, FileText, FileUp, Inbox, Loader2, Upload, X } from 'lucide-react';
 import { PIPELINE_STAGES } from '../data/fixtures';
 import { computeSummary } from '../lib/calc';
 import { dateShort, money, pct, ts } from '../lib/format';
-import { can, useStore, useTender } from '../state/store';
-import { Pager, SortTh, STATUS_META, StatusChip, usePager, useSort } from '../components/common';
-import { EmptyState, Stepper } from '../ui/ui';
+import { can, useConfig, useStore, useTender } from '../state/store';
+import { Pager, SortTh, STATUS_META, StatusChip, useColFilters, usePager, useSort } from '../components/common';
+import { Button, EmptyState, IconButton, Stepper } from '../ui/ui';
 import { useToast } from '../ui/toast';
 import type { TenderRecord } from '../types';
 import BusinessCasePage from './BusinessCasePage';
@@ -25,51 +25,105 @@ function fmtBytes(n: number): string {
 
 function UploadZone() {
   const { state, dispatch } = useStore();
+  const config = useConfig();
   const user = state.user!;
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
+  // A tender can have SEVERAL requirement documents: stage them first so the
+  // user can put them in reading order before processing starts.
+  const [staged, setStaged] = useState<{ name: string; size: number }[]>([]);
+  const [stagedType, setStagedType] = useState(config.tenderTypes[0] ?? 'Agency');
   const allowed = can.uploadTender(user.role);
 
   const toast = useToast();
-  const accept = (file: File | undefined | null) => {
-    if (!file || !allowed) return;
-    toast.push('info', 'Tender uploaded, processing started', file.name + ' - extraction, retrieval and draft generation take 15-20 minutes for 100+ pages. You can leave and come back.');
+  const addFiles = (files: FileList | null | undefined) => {
+    const list = Array.from(files ?? []).map((f) => ({ name: f.name, size: f.size || 4200000 }));
+    if (list.length) setStaged((cur) => [...cur, ...list]);
+  };
+  const move = (i: number, dir: -1 | 1) =>
+    setStaged((cur) => {
+      const j = i + dir;
+      if (j < 0 || j >= cur.length) return cur;
+      const next = [...cur];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  const start = () => {
+    if (!staged.length) return;
+    const total = staged.reduce((a, f) => a + f.size, 0);
     dispatch({
       type: 'upload-tender',
-      fileName: file.name,
-      sizeLabel: fmtBytes(file.size || 4200000),
-      pages: Math.max(60, Math.round((file.size || 4200000) / 90000)),
+      files: staged.map((f) => f.name),
+      sizeLabel: fmtBytes(total),
+      pages: Math.max(60, Math.round(total / 90000)),
+      tenderType: stagedType,
     });
+    toast.push('info', 'Tender uploaded, processing started', `${staged.length} document${staged.length > 1 ? 's' : ''} - extraction, retrieval and draft generation take 15-20 minutes for 100+ pages. You can leave and come back.`);
+    setStaged([]);
   };
 
   // Hidden entirely for roles without upload privileges
   if (!allowed) return null;
 
   return (
-    <div
-      className={`dropzone ${dragging ? 'dragging' : ''}`}
-      onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={(e) => { e.preventDefault(); setDragging(false); accept(e.dataTransfer.files?.[0]); }}
-      onClick={() => inputRef.current?.click()}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inputRef.current?.click(); } }}
-      role="button"
-      tabIndex={0}
-      aria-label="Upload a tender requirement document"
-    >
-      <input
-        ref={inputRef}
-        type="file"
-        accept=".pdf,.doc,.docx"
-        style={{ display: 'none' }}
-        onChange={(e) => { accept(e.target.files?.[0]); e.target.value = ''; }}
-      />
-      <b><FileUp size={16} aria-hidden style={{ verticalAlign: "-3px" }} /> Upload a tender requirement document</b> - drop it here or click to browse (PDF, DOCX)
-      <br />
-      <span className="muted small">
-        The document is stored encrypted and processing starts immediately: extraction, retrieval of
-        comparable past deals, and a first-cut business case.
-      </span>
+    <div>
+      <div
+        className={`dropzone ${dragging ? 'dragging' : ''}`}
+        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files); }}
+        onClick={() => inputRef.current?.click()}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inputRef.current?.click(); } }}
+        role="button"
+        tabIndex={0}
+        aria-label="Upload tender requirement documents"
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          multiple
+          accept=".pdf,.doc,.docx"
+          style={{ display: 'none' }}
+          onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }}
+        />
+        <b><FileUp size={16} aria-hidden style={{ verticalAlign: "-3px" }} /> Create a new tender</b> - drop the requirement documents here or click to browse (PDF, DOCX; multiple files allowed)
+        <br />
+        <span className="muted small">
+          Documents are stored encrypted and processed in your chosen order: extraction, retrieval of
+          comparable past deals, and a first-cut business case.
+        </span>
+      </div>
+
+      {staged.length > 0 && (
+        <div className="card upload-stage">
+          <h3>New tender · {staged.length} document{staged.length > 1 ? 's' : ''}</h3>
+          <p className="muted small">Put the files in reading order (the first file names the tender), pick the type, then upload.</p>
+          <ol className="stage-files">
+            {staged.map((f, i) => (
+              <li key={`${f.name}-${i}`}>
+                <span className="stage-idx">{i + 1}</span>
+                <FileText size={14} aria-hidden />
+                <span className="stage-name">{f.name}</span>
+                <span className="row-actions">
+                  <IconButton label="Move up" icon={ArrowUp} disabled={i === 0} onClick={() => move(i, -1)} />
+                  <IconButton label="Move down" icon={ArrowDown} disabled={i === staged.length - 1} onClick={() => move(i, 1)} />
+                  <IconButton danger label="Remove file" icon={X} onClick={() => setStaged((cur) => cur.filter((_, j) => j !== i))} />
+                </span>
+              </li>
+            ))}
+          </ol>
+          <div className="form-actions">
+            <label className="outcome-picker">
+              Type
+              <select value={stagedType} onChange={(e) => setStagedType(e.target.value)}>
+                {config.tenderTypes.map((t) => <option key={t}>{t}</option>)}
+              </select>
+            </label>
+            <Button variant="ghost" onClick={() => setStaged([])}>Cancel</Button>
+            <Button variant="primary" icon={Upload} onClick={start}>Upload and process</Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -173,7 +227,7 @@ function TenderOverview() {
             <tr><td>Reference</td><td><b>{tender.ref}</b></td></tr>
             <tr><td>Title</td><td>{tender.title}</td></tr>
             <tr><td>Issuer</td><td>{tender.agency} <span className="badge badge-sector">{tender.sector}</span></td></tr>
-            <tr><td>File</td><td>{tender.fileName} · {tender.fileSize} · ~{tender.pages} pages</td></tr>
+            <tr><td>Files</td><td>{(tender.files ?? [tender.fileName]).map((f, i) => `${i + 1}. ${f}`).join('  ·  ')} · {tender.fileSize} · ~{tender.pages} pages</td></tr>
             <tr><td>Uploaded</td><td>{tender.uploadedBy}, {ts(tender.uploadedAt)}</td></tr>
             <tr><td>Closing date</td><td><b>{dateShort(tender.closingDate)}</b></td></tr>
             <tr><td>Processing time</td><td>{tender.processingMinutes} min <span className="muted small">for ~{tender.pages} pages</span></td></tr>
@@ -215,6 +269,7 @@ function workflowIdx(t: TenderRecord): number {
 
 function TenderDetail() {
   const { state, dispatch } = useStore();
+  const config = useConfig();
   const tender = useTender();
   const [section, setSection] = useState<'overview' | 'bc'>('overview');
   const ready = !!tender.bc;
@@ -238,13 +293,11 @@ function TenderDetail() {
             <select
               value={tender.outcome ?? ''}
               onChange={(e) => {
-                if (e.target.value) dispatch({ type: 'set-outcome', outcome: e.target.value as 'Won' | 'Lost' | 'Awaiting result' });
+                if (e.target.value) dispatch({ type: 'set-outcome', outcome: e.target.value });
               }}
             >
               <option value="" disabled>Not set</option>
-              <option>Awaiting result</option>
-              <option>Won</option>
-              <option>Lost</option>
+              {config.outcomeTypes.map((o) => <option key={o}>{o}</option>)}
             </select>
           </label>
         )}
@@ -278,18 +331,20 @@ function statusText(t: TenderRecord): string {
 function TenderList() {
   const { state, dispatch } = useStore();
   const { sort, toggle, apply } = useSort();
+  const cf = useColFilters();
   const [fTitle, setFTitle] = useState('');
-  const [fSector, setFSector] = useState('');
-  const [fStatus, setFStatus] = useState('');
+  const [expanded, setExpanded] = useState<string | null>(null);
 
-  const statusOptions = [...new Set(state.tenders.map(statusText))];
-  const filtered = state.tenders.filter((t) => {
-    if (fTitle && !`${t.title} ${t.ref}`.toLowerCase().includes(fTitle.toLowerCase())) return false;
-    if (fSector && t.sector !== fSector) return false;
-    if (fStatus && statusText(t) !== fStatus) return false;
-    return true;
-  });
-  const rows = filtered.map((t) => ({ t, s: t.bc ? computeSummary(t.bc) : null }));
+  const searched = state.tenders.filter(
+    (t) => !fTitle || `${t.title} ${t.ref}`.toLowerCase().includes(fTitle.toLowerCase()),
+  );
+  const rows0 = searched.map((t) => ({ t, s: t.bc ? computeSummary(t.bc) : null }));
+  const colAccessors = {
+    agency: (r: { t: TenderRecord }) => r.t.agency,
+    sector: (r: { t: TenderRecord }) => r.t.sector,
+    status: (r: { t: TenderRecord }) => statusText(r.t),
+  };
+  const rows = cf.apply(rows0, colAccessors);
   const sorted = apply(rows, {
     ref: (r) => r.t.ref,
     title: (r) => r.t.title,
@@ -301,6 +356,11 @@ function TenderList() {
     status: (r) => statusText(r.t),
   });
   const pager = usePager(sorted, 10);
+  const fcol = (k: keyof typeof colAccessors) => ({
+    filterValues: rows0.map((r) => String(colAccessors[k](r))),
+    filter: cf.filters[k],
+    onFilter: (f: Parameters<typeof cf.set>[1]) => cf.set(k, f),
+  });
 
   return (
     <div>
@@ -320,45 +380,70 @@ function TenderList() {
           value={fTitle}
           onChange={(e) => setFTitle(e.target.value)}
         />
-        <select value={fSector} onChange={(e) => setFSector(e.target.value)}>
-          <option value="">Agency + Commercial</option>
-          <option>Agency</option>
-          <option>Commercial</option>
-        </select>
-        <select value={fStatus} onChange={(e) => setFStatus(e.target.value)}>
-          <option value="">Any status</option>
-          {statusOptions.map((o) => <option key={o}>{o}</option>)}
-        </select>
-        <span className="muted small">{filtered.length} of {state.tenders.length} tenders</span>
+        <span className="muted small">{rows.length} of {state.tenders.length} tenders · use the funnel icons to filter columns</span>
       </div>
       <table className="grid">
         <thead>
           <tr>
+            <th aria-label="Show documents" />
             <SortTh label="Reference" k="ref" sort={sort} onToggle={toggle} />
             <SortTh label="Title" k="title" sort={sort} onToggle={toggle} />
-            <SortTh label="Issuer" k="agency" sort={sort} onToggle={toggle} />
-            <SortTh label="Sector" k="sector" sort={sort} onToggle={toggle} />
+            <SortTh label="Issuer" k="agency" sort={sort} onToggle={toggle} {...fcol('agency')} />
+            <SortTh label="Type" k="sector" sort={sort} onToggle={toggle} {...fcol('sector')} />
             <SortTh label="Closing" k="closing" sort={sort} onToggle={toggle} />
             <SortTh label="TCV" k="tcv" sort={sort} onToggle={toggle} num />
             <SortTh label="EBITDA %" k="ebitda" sort={sort} onToggle={toggle} num />
-            <SortTh label="Status" k="status" sort={sort} onToggle={toggle} />
+            <SortTh label="Status" k="status" sort={sort} onToggle={toggle} {...fcol('status')} />
           </tr>
         </thead>
         <tbody>
-          {pager.slice.map(({ t, s }) => (
-            <tr key={t.id} className="row-click" onClick={() => dispatch({ type: 'open-tender', id: t.id })}>
-              <td className="mono">{t.ref}</td>
-              <td><b>{t.title}</b><div className="muted small">{t.fileName}</div></td>
-              <td>{t.agency}</td>
-              <td><span className="badge badge-sector">{t.sector}</span></td>
-              <td>{dateShort(t.closingDate)}</td>
-              <td className="num">{s ? money(s.total.tcv) : '-'}</td>
-              <td className="num">{s ? pct(s.total.ebitdaPct) : '-'}</td>
-              <td>{statusCell(t)}</td>
-            </tr>
-          ))}
+          {pager.slice.map(({ t, s }) => {
+            const files = t.files ?? [t.fileName];
+            const open = expanded === t.id;
+            return (
+              <Fragment key={t.id}>
+                <tr className="row-click" onClick={() => dispatch({ type: 'open-tender', id: t.id })}>
+                  <td className="expand-cell">
+                    <button
+                      className="expand-btn"
+                      aria-label={open ? 'Hide uploaded documents' : 'Show uploaded documents'}
+                      aria-expanded={open}
+                      onClick={(e) => { e.stopPropagation(); setExpanded(open ? null : t.id); }}
+                    >
+                      {open ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
+                    </button>
+                  </td>
+                  <td className="mono">{t.ref}</td>
+                  <td><b>{t.title}</b><div className="muted small">{files.length} document{files.length > 1 ? 's' : ''}</div></td>
+                  <td>{t.agency}</td>
+                  <td><span className="badge badge-sector">{t.sector}</span></td>
+                  <td>{dateShort(t.closingDate)}</td>
+                  <td className="num">{s ? money(s.total.tcv) : '-'}</td>
+                  <td className="num">{s ? pct(s.total.ebitdaPct) : '-'}</td>
+                  <td>{statusCell(t)}</td>
+                </tr>
+                {open && (
+                  <tr className="expand-row">
+                    <td />
+                    <td colSpan={8}>
+                      <div className="muted small">Uploaded requirement documents (reading order):</div>
+                      <ol className="stage-files readonly">
+                        {files.map((f, i) => (
+                          <li key={`${f}-${i}`}>
+                            <span className="stage-idx">{i + 1}</span>
+                            <FileText size={14} aria-hidden />
+                            <span className="stage-name">{f}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
           {sorted.length === 0 && (
-            <tr><td colSpan={8} className="muted">No tenders match these filters.</td></tr>
+            <tr><td colSpan={9} className="muted">No tenders match these filters.</td></tr>
           )}
         </tbody>
       </table>

@@ -2,6 +2,7 @@
 // All customers, vendors, figures and citations are fictitious.
 
 import type {
+  AppConfig,
   AuditEntry,
   BusinessCaseState,
   HistoricalDoc,
@@ -12,14 +13,28 @@ import type {
   UserInfo,
 } from '../types';
 import { computeSummary, defaultAppliedRates, defaultVendorColumns } from '../lib/calc';
+import { CURRENCIES, GRADE_RATES, ROLES, SOLUTION_OFFERINGS, TEAMS } from './parameters';
+
+/** Admin-configurable lists and defaults, seeded from the parameter catalogue */
+export const DEFAULT_CONFIG: AppConfig = {
+  tenderTypes: ['Agency', 'Commercial'],
+  outcomeTypes: ['Awaiting result', 'Won', 'Lost'],
+  solutionOfferings: [...SOLUTION_OFFERINGS],
+  roles: [...ROLES],
+  teams: [...TEAMS],
+  fxDefaults: Object.fromEntries(CURRENCIES.map(([code, , planning]) => [code, planning])),
+  gradeRates: { ...GRADE_RATES },
+};
 
 export const USERS: UserInfo[] = [
-  { name: 'Eng Chuan Puay', email: 'ecpuay@lpstech.com', role: 'executive-sponsor', roleLabel: 'Executive Sponsor' },
-  { name: 'Ethan Lim', email: 'ethan.lim@lpstech.com', role: 'business-sponsor', roleLabel: 'Business Sponsor' },
+  { name: 'Eng Chuan Puay', email: 'ecpuay@lpstech.com', role: 'executive-sponsor', roleLabel: 'Head of South East Asia' },
+  { name: 'Thomas Low', email: 'thomas.low@lpstech.com', role: 'executive-sponsor', roleLabel: 'Head of Singapore Delivery & CEO, LPS' },
+  { name: 'Ethan Lim', email: 'ethan.lim@lpstech.com', role: 'business-sponsor', roleLabel: 'Senior Manager Financial P&A' },
   { name: 'John Price', email: 'john.price@lpstech.com', role: 'bidding-manager', roleLabel: 'Bidding Manager' },
-  { name: 'Chee Wee', email: 'chee.wee@lpstech.com', role: 'presales', roleLabel: 'Presales Consultant' },
-  { name: 'Priya Nair', email: 'priya.nair@lpstech.com', role: 'delivery', roleLabel: 'Delivery Manager' },
+  { name: 'Chee Wee', email: 'chee.wee@lpstech.com', role: 'presales', roleLabel: 'Presales' },
+  { name: 'Priya Nair', email: 'priya.nair@lpstech.com', role: 'delivery', roleLabel: 'Delivery' },
   { name: 'Felicia Phan', email: 'felicia.phan@lpstech.com', role: 'bd-team', roleLabel: 'Business Development' },
+  { name: 'Kelyn Wong', email: 'kelyn.wong@lpstech.com', role: 'admin', roleLabel: 'Administrator' },
 ];
 
 /** Hardcoded demo credentials - one shared password, checked in LoginPage. */
@@ -183,64 +198,64 @@ const productItems: ProductItem[] = [
 const resourceItems: ResourceItem[] = [
   {
     id: 'r1', quoteLine: 1, team: 'Insys - Cloud - SG', role: 'Project Manager', grade: '7',
-    teamCode: 'INS-CL-SG', dayRate: 980, mandaysByFY: [220, 80, 40],
+    teamCode: 'INS-CL-SG', dayRate: 526, mandaysByFY: [220, 80, 40],
     remarks: 'Programme Manager', mspoRole: 'PM-II (Project Management)',
     provenance: cite('BC-2023-041', 'Business Case - Regional Bank Contact Centre (Won, 2023)', 0.89, 'PM 210 md in build year for comparable 500-seat rollout',
       'Clause 5.1.1: The Contractor shall appoint a dedicated programme manager accountable for delivery across all phases of the programme.'),
   },
   {
     id: 'r2', quoteLine: 1, team: 'Insys - Cloud - SG', role: 'System Architect', grade: '8',
-    teamCode: 'INS-CL-SG', dayRate: 1150, mandaysByFY: [180, 40, 20],
+    teamCode: 'INS-CL-SG', dayRate: 631, mandaysByFY: [180, 40, 20],
     remarks: 'Lead Solution Architect', mspoRole: 'ARCH-III (Architecture)',
     provenance: cite('BC-2023-041', 'Business Case - Regional Bank Contact Centre (Won, 2023)', 0.85, 'SA 170 md build + advisory tail',
       'Clause 5.1.2: A lead solution architect shall own the end-to-end technical design and the integration blueprint for the solution.'),
   },
   {
     id: 'r3', quoteLine: 1, team: 'MY ODC - AD - MY', role: 'Solution Consultant', grade: '6',
-    teamCode: 'MY-AD', dayRate: 820, mandaysByFY: [420, 60, 0],
+    teamCode: 'MY-AD', dayRate: 447, mandaysByFY: [420, 60, 0],
     remarks: 'CCaaS Consultant (IVR / routing / CTI)', mspoRole: 'CONS-III (Consulting)',
     provenance: estimate,
   },
   {
     id: 'r4', quoteLine: 1, team: 'MY ODC - AD - MY', role: 'Analyst Programmer', grade: '4',
-    teamCode: 'MY-AD', dayRate: 640, mandaysByFY: [680, 120, 0],
+    teamCode: 'MY-AD', dayRate: 261, mandaysByFY: [680, 120, 0],
     remarks: 'Integration Developer', mspoRole: 'CONS-II (Consulting)',
     provenance: estimate,
   },
   {
     id: 'r5', quoteLine: 1, team: 'PH ODC - AD - PH', role: 'QA Manager', grade: '6',
-    teamCode: 'PH-AD', dayRate: 700, mandaysByFY: [160, 40, 0],
+    teamCode: 'PH-AD', dayRate: 447, mandaysByFY: [160, 40, 0],
     remarks: 'Test Lead (SIT/UAT)', mspoRole: 'QA-III (Quality Assurance)',
     provenance: estimate,
   },
   {
     id: 'r6', quoteLine: 1, team: 'Insys - Cloud - SG', role: 'System Engineer', grade: '5',
-    teamCode: 'INS-CL-SG', dayRate: 760, mandaysByFY: [140, 60, 40],
+    teamCode: 'INS-CL-SG', dayRate: 309, mandaysByFY: [140, 60, 40],
     remarks: 'DevOps Engineer', mspoRole: 'ENG-II (Engineering)',
     provenance: estimate,
   },
   {
     id: 'r7', quoteLine: 2, team: 'Insys - Non-cloud - SG', role: 'Technical Engineer', grade: '4',
-    teamCode: 'INS-NC-SG', dayRate: 560, mandaysByFY: [120, 440, 440],
+    teamCode: 'INS-NC-SG', dayRate: 261, mandaysByFY: [120, 440, 440],
     remarks: 'Service Desk L2', mspoRole: 'SUP-II (Support)',
     provenance: cite('BC-2024-012', 'Business Case - Govt Shared Services Helpdesk (Won, 2024)', 0.9, 'L2 support 2 FTE for 400+ seat operation',
       'Clause 8.1.4: The Contractor shall operate a service desk with L2 support sized for the full agent population across the contracted operating hours.'),
   },
   {
     id: 'r8', quoteLine: 2, team: 'Insys - Non-cloud - SG', role: 'Operation Manager', grade: '7',
-    teamCode: 'INS-NC-SG', dayRate: 850, mandaysByFY: [40, 120, 120],
+    teamCode: 'INS-NC-SG', dayRate: 526, mandaysByFY: [40, 120, 120],
     remarks: 'SDM for Operations', mspoRole: 'SDM-II (Service Mgmt)',
     provenance: estimate,
   },
   {
     id: 'r9', quoteLine: 3, team: 'PH ODC - MS - PH', role: 'Security Analyst', grade: '4',
-    teamCode: 'PH-MS', dayRate: 590, mandaysByFY: [220, 660, 660],
+    teamCode: 'PH-MS', dayRate: 261, mandaysByFY: [220, 660, 660],
     remarks: 'SOC Analyst (24x7 pool)', mspoRole: 'SEC-II (Security Ops)',
     provenance: estimate,
   },
   {
     id: 'r10', quoteLine: 3, team: 'PH ODC - MS - PH', role: 'Security Specialist', grade: '6',
-    teamCode: 'PH-MS', dayRate: 880, mandaysByFY: [40, 80, 80],
+    teamCode: 'PH-MS', dayRate: 447, mandaysByFY: [40, 80, 80],
     remarks: 'Threat Intelligence Lead', mspoRole: 'SEC-III (Security Ops)',
     provenance: estimate,
   },
@@ -263,16 +278,18 @@ export function buildInitialBusinessCase(): BusinessCaseState {
       inflationBaseFY: 2026,
       // Per-field provenance: extracted fields cite the tender document itself;
       // internal GTM mappings are AI inferences with no source.
+      // Extracted fields cite the tender document itself; Salesforce-sourced
+      // fields are manual entry (Salesforce integration is out of scope).
       fieldProv: {
-        crmId: { kind: 'estimate' },
+        crmId: { kind: 'manual', source: 'Salesforce' },
         projectName: extracted('ITT/2026/014', TENDER.title + ' - Requirement Specification', 'Cover page: "National Contact Centre Modernisation Programme"'),
         customer: extracted('ITT/2026/014', TENDER.title + ' - Requirement Specification', 'Section 1.1: issued by the Public Service Digital Agency (Singapore)'),
-        endCustomer: extracted('ITT/2026/014', TENDER.title + ' - Requirement Specification', 'Section 1.2: services support whole-of-government contact centre operations'),
-        gtmUnit: { kind: 'estimate' },
-        gtmSubTeam: { kind: 'estimate' },
-        majorSolutionOffering: { kind: 'estimate' },
-        projectStart: extracted('ITT/2026/014', TENDER.title + ' - Requirement Specification', 'Section 2.1: Contract Period - 36 months from award, target commencement April 2026'),
-        projectEnd: extracted('ITT/2026/014', TENDER.title + ' - Requirement Specification', 'Section 2.1: Contract Period - 36 months from award'),
+        endCustomer: { kind: 'manual', source: 'Salesforce' },
+        gtmUnit: { kind: 'manual', source: 'Salesforce' },
+        gtmSubTeam: { kind: 'manual', source: 'Salesforce' },
+        majorSolutionOffering: { kind: 'manual', source: 'Salesforce' },
+        projectStart: { kind: 'manual', source: 'Salesforce' },
+        projectEnd: { kind: 'manual', source: 'Salesforce' },
         currency: extracted('ITT/2026/014', TENDER.title + ' - Requirement Specification', 'Section 9.2: all prices shall be quoted in Singapore Dollars (SGD)'),
       },
     },
@@ -287,6 +304,8 @@ export function buildInitialBusinessCase(): BusinessCaseState {
     productItems,
     resourceItems,
     billing: [],
+    billingFrequency: 'Quarterly',
+    summaryRemarks: '',
     otherIndirect: {
       travelExpense: [35000, 12000, 8000],
       otherCosts: [15000, 5000, 5000],
@@ -294,40 +313,30 @@ export function buildInitialBusinessCase(): BusinessCaseState {
     },
     vendorCols: [],
     fxOverrides: {},
+    gradeRateOverrides: {},
     appliedRates: defaultAppliedRates(3),
     labourMonthly: {},
     confirmedInputs: [],
     approvals: [],
   };
 
-  // Billing plan initialised to match the computed TCV (Final Check passes on generation;
-  // subsequent edits may break the equality, which the checks then surface).
+  // Billing plan: the TCV divided evenly across the project duration at the
+  // chosen frequency (Final Check passes on generation; later edits may break
+  // the equality, which the checks then surface).
   const s = computeSummary(bc);
-  const tcv = s.total.tcv;
-  const impl = s.perLine[0].tcv;
-  const rec = tcv - impl;
-  const mk = (i: number, date: string, schedule: string, amount: number): typeof bc.billing[number] => ({
-    id: `b${i}`, date, schedule, amount: Math.round(amount), remarks: '',
-    provenance: { kind: 'estimate' },
-  });
-  bc.billing = [
-    mk(1, '2026-05-01', 'Contract award (10% of implementation)', impl * 0.1),
-    mk(2, '2026-09-01', 'Detailed design sign-off (20%)', impl * 0.2),
-    mk(3, '2027-01-01', 'SIT completion (25%)', impl * 0.25),
-    mk(4, '2027-04-01', 'Go-live & acceptance (35%)', impl * 0.35),
-    mk(5, '2027-10-01', 'Post-implementation review (10%)', impl * 0.1),
-  ];
-  // Recurring services billed quarterly over 12 quarters starting Jul-2026
-  const q = rec / 12;
-  for (let i = 0; i < 12; i++) {
-    const d = new Date(2026, 6 + i * 3, 1);
-    bc.billing.push(
-      mk(6 + i, d.toISOString().slice(0, 10), `Quarterly service fee Q${i + 1} (AMS + SOC)`, q),
-    );
-  }
-  // Round-off adjustment onto the final milestone so billing exactly equals TCV
-  const diff = tcv - bc.billing.reduce((a, b) => a + b.amount, 0);
-  bc.billing[bc.billing.length - 1].amount += Math.round(diff);
+  const tcv = Math.round(s.total.tcv);
+  const per = 3; // quarterly
+  const count = Math.max(1, Math.ceil(s.durationMonths / per));
+  const startD = new Date(bc.basicInfo.projectStart);
+  const base = Math.floor(tcv / count);
+  bc.billing = Array.from({ length: count }, (_, i) => ({
+    id: `b${i + 1}`,
+    date: new Date(startD.getFullYear(), startD.getMonth() + i * per, 1).toISOString().slice(0, 10),
+    schedule: `Quarterly billing ${i + 1} of ${count}`,
+    amount: i === count - 1 ? tcv - base * (count - 1) : base,
+    remarks: '',
+    provenance: { kind: 'estimate' as const },
+  }));
   // Named vendor-payment columns seeded from the Product Plan allocation
   bc.vendorCols = defaultVendorColumns(bc, s.durationMonths);
   return bc;
@@ -362,7 +371,7 @@ function pastBc(
   return {
     ...bc,
     status: 'submitted',
-    approvals: ['Eng Chuan Puay', 'Ethan Lim'],
+    approvals: ['Eng Chuan Puay', 'Thomas Low', 'Ethan Lim'],
     approvedBy,
     approvedAt: '2026-06-30T15:00:00+08:00',
     basicInfo: { ...bc.basicInfo, projectName, customer, endCustomer: customer, crmId },

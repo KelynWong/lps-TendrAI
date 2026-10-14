@@ -1,7 +1,7 @@
 // Shared UI atoms: figure-state badges (trust system), status chips,
 // editable cells, sorting, pagination, formula tooltips.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import {
@@ -14,7 +14,9 @@ import {
   ChevronsLeft,
   ChevronsRight,
   FileSearch,
+  Filter,
   Lock,
+  PenLine,
   Sparkles,
 } from 'lucide-react';
 import type { BcStatus, Provenance } from '../types';
@@ -93,26 +95,132 @@ export function useSort(initial?: SortState) {
   return { sort, toggle, apply };
 }
 
+// ---- Excel-style column filters -------------------------------------------
+
+/** Per-column filter: free-text contains + multi-select of distinct values */
+export interface ColFilter {
+  text: string;
+  /** null = all values selected */
+  sel: string[] | null;
+}
+
+/** Holds the per-column filters of one table and applies them to its rows */
+export function useColFilters() {
+  const [filters, setFilters] = useState<Record<string, ColFilter>>({});
+  const set = (k: string, f: ColFilter | null) =>
+    setFilters((cur) => {
+      const next = { ...cur };
+      if (f && (f.text || f.sel)) next[k] = f;
+      else delete next[k];
+      return next;
+    });
+  const apply = <T,>(items: T[], accessors: Record<string, (t: T) => string | number>): T[] =>
+    items.filter((it) =>
+      Object.entries(filters).every(([k, f]) => {
+        const acc = accessors[k];
+        if (!acc) return true;
+        const v = String(acc(it));
+        if (f.text && !v.toLowerCase().includes(f.text.toLowerCase())) return false;
+        if (f.sel && !f.sel.includes(v)) return false;
+        return true;
+      }),
+    );
+  return { filters, set, apply };
+}
+
 export function SortTh({
   label,
   k,
   sort,
   onToggle,
   num,
+  filterValues,
+  filter,
+  onFilter,
 }: {
   label: ReactNode;
   k: string;
   sort: SortState | null;
   onToggle: (key: string) => void;
   num?: boolean;
+  /** Distinct values of this column: enables the Excel-style filter popover */
+  filterValues?: string[];
+  filter?: ColFilter;
+  onFilter?: (f: ColFilter | null) => void;
 }) {
   const active = sort?.key === k;
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (popRef.current?.contains(t) || btnRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  const values = filterValues ? [...new Set(filterValues)].sort((a, b) => a.localeCompare(b)) : [];
+  const selSet = filter?.sel ?? null;
+  const fActive = !!filter && (!!filter.text || !!filter.sel);
+  const toggleVal = (v: string) => {
+    const cur = selSet ?? values;
+    const next = cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v];
+    onFilter?.({ text: filter?.text ?? '', sel: next.length === values.length ? null : next });
+  };
+
   return (
     <th className={`sort-th ${num ? 'num' : ''}`} onClick={() => onToggle(k)}>
       {label}
       <span className={`sort-arrow ${active ? 'on' : ''}`} aria-hidden>
         {active ? (sort!.dir === 1 ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={12} />}
       </span>
+      {filterValues && onFilter && (
+        <button
+          ref={btnRef}
+          type="button"
+          className={`colfilter-btn ${fActive ? 'on' : ''}`}
+          aria-label="Filter this column"
+          title="Filter this column"
+          onClick={(e) => {
+            e.stopPropagation();
+            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            setPos({ left: Math.max(8, Math.min(r.left, window.innerWidth - 248)), top: r.bottom + 4 });
+            setOpen((v) => !v);
+          }}
+        >
+          <Filter size={11} aria-hidden />
+        </button>
+      )}
+      {open && pos &&
+        createPortal(
+          <div ref={popRef} className="colfilter-pop" style={{ left: pos.left, top: pos.top }} onClick={(e) => e.stopPropagation()}>
+            <input
+              type="search"
+              placeholder="Contains..."
+              value={filter?.text ?? ''}
+              onChange={(e) => onFilter?.({ text: e.target.value, sel: selSet })}
+            />
+            <div className="colfilter-list">
+              {values.map((v) => (
+                <label key={v}>
+                  <input type="checkbox" checked={!selSet || selSet.includes(v)} onChange={() => toggleVal(v)} />
+                  <span>{v || '(blank)'}</span>
+                </label>
+              ))}
+            </div>
+            <div className="colfilter-actions">
+              <button className="btn btn-compact" type="button" onClick={() => onFilter?.(null)}>Clear</button>
+              <button className="btn btn-compact" type="button" onClick={() => setOpen(false)}>Done</button>
+            </div>
+          </div>,
+          document.body,
+        )}
     </th>
   );
 }
@@ -232,6 +340,17 @@ export function ProvenanceBadge({ p, context, tab }: { p: Provenance; context?: 
       </span>
     );
   }
+  if (p.kind === 'manual') {
+    return (
+      <span
+        className="badge badge-manual"
+        title={`Not AI-populated: ${p.source ?? 'the source system'} is not integrated in this project scope. Look the value up in ${p.source ?? 'the source system'} and key it in manually.`}
+      >
+        <PenLine size={12} aria-hidden />
+        Manual · {p.source ?? 'entry'}
+      </span>
+    );
+  }
   // Confirmed value that was originally cited: the citation is preserved, so
   // the badge still opens the source. Two distinct states: the cited value was
   // confirmed as-is, or it was changed after citing (old value kept in panel).
@@ -263,6 +382,7 @@ export function ProvenanceLegendItems() {
     <div className="legend-items">
       <span><span className="badge badge-cited"><Sparkles size={12} aria-hidden />Cited · DOC-ID</span> AI suggested, grounded in a historical record. Click to view the source.</span>
       <span><span className="badge badge-estimate"><Sparkles size={12} aria-hidden />Estimate · no source</span> AI suggested, unverified industry estimate.</span>
+      <span><span className="badge badge-manual"><PenLine size={12} aria-hidden />Manual · Salesforce</span> Not AI-populated: look the value up in the named system and key it in by hand.</span>
       <span><span className="badge badge-cited-confirmed"><Sparkles size={12} aria-hidden /><CheckCircle2 size={12} aria-hidden />Cited · confirmed · Name</span> Cited value confirmed unchanged by a person; the citation is kept.</span>
       <span><span className="badge badge-cited-edited"><Sparkles size={12} aria-hidden /><CheckCircle2 size={12} aria-hidden />Cited · edited · Name</span> Cited value changed by a person; the original cited value stays viewable.</span>
       <span><span className="badge badge-human"><CheckCircle2 size={12} aria-hidden />Confirmed · Name</span> Human-entered or confirmed value with no citation.</span>

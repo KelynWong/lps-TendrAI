@@ -4,7 +4,7 @@
 // and the citation source panel.
 
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Download, HelpCircle, History, Save, Undo2, X } from 'lucide-react';
+import { ArrowRight, Check, Download, HelpCircle, History, Save, Undo2, X } from 'lucide-react';
 import type { BusinessCaseState } from '../types';
 import { computeSummary, finalChecks } from '../lib/calc';
 import { money, pct, ts } from '../lib/format';
@@ -51,6 +51,11 @@ const TAB_SECTIONS: Record<string, string> = {
   labour: 'Labour Inputs',
 };
 
+/** Reverse lookup: Final Check tab label -> tab key (for "Go to tab") */
+const SECTION_TABS: Record<string, string> = Object.fromEntries(
+  Object.entries(TAB_SECTIONS).map(([k, v]) => [v, k]),
+);
+
 type DialogKind = 'approve' | 'save-void' | null;
 
 export default function BusinessCasePage() {
@@ -67,6 +72,13 @@ export default function BusinessCasePage() {
   const [ackUnreviewed, setAckUnreviewed] = useState(false);
   const [draft, setDraft] = useState<BusinessCaseState>(saved);
   useEffect(() => setDraft(saved), [saved]);
+
+  useEffect(() => {
+    if (!showChecks) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowChecks(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [showChecks]);
 
   const dirty = draft !== saved;
   const draftCtx = useMemo(
@@ -198,7 +210,7 @@ export default function BusinessCasePage() {
             {!locked && can.approve(user.role) && (
               <>
                 {saved.approvals.includes(user.name) ? (
-                  <span className="approval-pill"><Check size={12} aria-hidden /> You approved · awaiting second approval</span>
+                  <span className="approval-pill"><Check size={12} aria-hidden /> You approved · {saved.approvals.length} of {APPROVALS_REQUIRED} received</span>
                 ) : (
                   <Button
                     variant="primary"
@@ -261,20 +273,42 @@ export default function BusinessCasePage() {
           )}
 
           {showChecks && (
-            <div className="checks-panel">
-              <h3>Final Check <span className="muted">(template validations, live)</span></h3>
-              <table className="grid">
-                <thead><tr><th>Tab</th><th>Checking</th><th>Result</th></tr></thead>
-                <tbody>
-                  {checks.map((c, i) => (
-                    <tr key={i}>
-                      <td>{c.tab}</td>
-                      <td>{c.check}<div className="muted small">{c.detail}</div></td>
-                      <td>{c.ok ? <span className="ok">OK</span> : <span className="err">Error - check this tab</span>}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setShowChecks(false)}>
+              <div className="dialog dialog-wide" role="dialog" aria-modal="true" aria-labelledby="fc-title">
+                <h2 id="fc-title" className="dialog-title">
+                  Final Check <span className="muted" style={{ fontWeight: 400, fontSize: '13px' }}>(template validations, live)</span>
+                </h2>
+                <div className="dialog-body">
+                  <div className="ver-scroll">
+                  <table className="grid">
+                    <thead><tr><th>Tab</th><th>Checking</th><th>Result</th><th /></tr></thead>
+                    <tbody>
+                      {checks.map((c, i) => (
+                        <tr key={i}>
+                          <td>{c.tab}</td>
+                          <td>{c.check}<div className="muted small">{c.detail}</div></td>
+                          <td>{c.ok ? <span className="ok">OK</span> : <span className="err">Error</span>}</td>
+                          <td>
+                            {!c.ok && SECTION_TABS[c.tab] && (
+                              <Button
+                                compact
+                                icon={ArrowRight}
+                                onClick={() => { setTab(SECTION_TABS[c.tab]); setShowChecks(false); }}
+                              >
+                                Go to {c.tab}
+                              </Button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  </div>
+                </div>
+                <div className="dialog-actions">
+                  <Button variant="primary" onClick={() => setShowChecks(false)}>Close</Button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -296,11 +330,11 @@ export default function BusinessCasePage() {
           onClose={() => setDialog(null)}
         >
           {saved.approvals.length + 1 >= APPROVALS_REQUIRED ? (
-            <>This is the second of {APPROVALS_REQUIRED} approvals. The business case will be locked
+            <>This is the final of {APPROVALS_REQUIRED} approvals. The business case will be locked
               and no further edits are possible.</>
           ) : (
             <>This records approval {saved.approvals.length + 1} of {APPROVALS_REQUIRED}. Editing stays open,
-              but any saved change will void your approval and both sponsors must approve again.</>
+              but any saved change will void the approvals and all {APPROVALS_REQUIRED} approvers must approve again.</>
           )}
           {totalUnreviewed > 0 && (
             <div className="ack-box">
@@ -326,8 +360,9 @@ export default function BusinessCasePage() {
           onConfirm={() => { setDialog(null); doSave(); }}
           onClose={() => setDialog(null)}
         >
-          This business case is half approved by {saved.approvals.join(' and ')}. Saving these changes
-          makes that approval void - both sponsors must approve again before it can be locked.
+          This business case is partially approved by {saved.approvals.join(' and ')}. Saving these
+          changes makes the approval void - all {APPROVALS_REQUIRED} approvers must approve again
+          before it can be locked.
         </ConfirmDialog>
       </DraftCtx.Provider>
     </CitationProvider>

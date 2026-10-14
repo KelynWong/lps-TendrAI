@@ -9,7 +9,7 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 import { Download, FilePlus2, FileUp, Inbox, Link2, Pencil, Trash2, Upload, X } from 'lucide-react';
 import { dateShort } from '../lib/format';
 import { useStore } from '../state/store';
-import { Pager, SortTh, usePager, useSort } from '../components/common';
+import { Pager, SortTh, useColFilters, usePager, useSort } from '../components/common';
 import { Banner, Button, ConfirmDialog, EmptyState, IconButton } from '../ui/ui';
 import { useToast } from '../ui/toast';
 import type { HistoricalDoc } from '../types';
@@ -113,6 +113,10 @@ export default function HistoricalPage() {
   const [dragging, setDragging] = useState(false);
   const [replDragging, setReplDragging] = useState(false);
   const { sort, toggle, apply } = useSort();
+  const cf = useColFilters();
+  // Embedding internals are technical: Administrator only
+  const isAdmin = user.role === 'admin';
+  const nCols = 9 + (isAdmin ? 2 : 0);
   const [batch, setBatch] = useState<Batch | null>(null);
   const [edit, setEdit] = useState<EditDoc | null>(null);
   const [showIncomplete, setShowIncomplete] = useState(false);
@@ -198,12 +202,25 @@ export default function HistoricalPage() {
   const dupTypes = DOC_TYPES.filter((t) => (typeCounts.get(t) ?? 0) > 1);
 
   // ---- Table data: filter docs, then group linked ones into display units ----
-  const filtered = library.filter((d) => {
-    if (fTitle && !`${d.title} ${d.id} ${d.customer}`.toLowerCase().includes(fTitle.toLowerCase())) return false;
-    if (fType && d.docType !== fType) return false;
-    if (fSector && d.sector !== fSector) return false;
-    if (fOutcome && d.outcome !== fOutcome) return false;
-    return true;
+  const colAccessors = {
+    docType: (d: HistoricalDoc) => d.docType,
+    customer: (d: HistoricalDoc) => d.customer,
+    outcome: (d: HistoricalDoc) => d.outcome,
+  };
+  const filtered = cf.apply(
+    library.filter((d) => {
+      if (fTitle && !`${d.title} ${d.id} ${d.customer}`.toLowerCase().includes(fTitle.toLowerCase())) return false;
+      if (fType && d.docType !== fType) return false;
+      if (fSector && d.sector !== fSector) return false;
+      if (fOutcome && d.outcome !== fOutcome) return false;
+      return true;
+    }),
+    colAccessors,
+  );
+  const fcol = (k: keyof typeof colAccessors) => ({
+    filterValues: library.map((d) => String(colAccessors[k](d))),
+    filter: cf.filters[k],
+    onFilter: (f: Parameters<typeof cf.set>[1]) => cf.set(k, f),
   });
   const unitMap = new Map<string, HistoricalDoc[]>();
   for (const d of filtered) {
@@ -594,13 +611,13 @@ export default function HistoricalPage() {
           <tr>
             <SortTh label="ID" k="id" sort={sort} onToggle={toggle} />
             <SortTh label="Title" k="title" sort={sort} onToggle={toggle} />
-            <SortTh label="Type" k="docType" sort={sort} onToggle={toggle} />
+            <SortTh label="Type" k="docType" sort={sort} onToggle={toggle} {...fcol('docType')} />
             <SortTh label="Sector" k="sector" sort={sort} onToggle={toggle} />
-            <SortTh label="Customer" k="customer" sort={sort} onToggle={toggle} />
-            <SortTh label="Outcome" k="outcome" sort={sort} onToggle={toggle} />
+            <SortTh label="Customer" k="customer" sort={sort} onToggle={toggle} {...fcol('customer')} />
+            <SortTh label="Outcome" k="outcome" sort={sort} onToggle={toggle} {...fcol('outcome')} />
             <SortTh label="Uploaded" k="uploaded" sort={sort} onToggle={toggle} />
-            <SortTh label="Embedding" k="embedding" sort={sort} onToggle={toggle} />
-            <SortTh label="Chunks" k="chunks" sort={sort} onToggle={toggle} num />
+            {isAdmin && <SortTh label="Embedding" k="embedding" sort={sort} onToggle={toggle} />}
+            {isAdmin && <SortTh label="Chunks" k="chunks" sort={sort} onToggle={toggle} num />}
             <SortTh label="Version" k="version" sort={sort} onToggle={toggle} num />
             <th />
           </tr>
@@ -613,7 +630,7 @@ export default function HistoricalPage() {
               <Fragment key={u[0].group ? `g-${u[0].group}` : u[0].id}>
                 {grouped && (
                   <tr className="group-row">
-                    <td colSpan={11}>
+                    <td colSpan={nCols}>
                       <Link2 size={13} aria-hidden /> Linked set · {u[0].customer} · {u.map((d) => d.docType).join(' + ')}
                       {missingInSet.length > 0 && (
                         <span className="muted"> (no {missingInSet.map((m) => m.toLowerCase()).join(' or ')} on record)</span>
@@ -630,8 +647,8 @@ export default function HistoricalPage() {
                     <td>{d.customer}</td>
                     <td>{d.outcome === 'Won' ? <span className="pill pill-won">Won</span> : d.outcome === 'Lost' ? <span className="pill pill-lost">Lost</span> : '-'}</td>
                     <td className="muted">{dateShort(d.uploadDate)} · {d.uploadedBy}</td>
-                    <td><span className={statusCls[d.embeddingStatus] ?? ''}>{d.embeddingStatus}</span></td>
-                    <td className="num">{d.chunks ? d.chunks.toLocaleString() : '-'}</td>
+                    {isAdmin && <td><span className={statusCls[d.embeddingStatus] ?? ''}>{d.embeddingStatus}</span></td>}
+                    {isAdmin && <td className="num">{d.chunks ? d.chunks.toLocaleString() : '-'}</td>}
                     <td className="num">
                       <button
                         className="cell-btn"
@@ -661,7 +678,7 @@ export default function HistoricalPage() {
           })}
           {units.length === 0 && (
             <tr>
-              <td colSpan={11}>
+              <td colSpan={nCols}>
                 <EmptyState
                   icon={Inbox}
                   title="No documents match these filters"

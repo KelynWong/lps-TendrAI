@@ -103,6 +103,11 @@ export function detailedDiff(a: BusinessCaseState, b: BusinessCaseState): Change
       push('Basic Info', 'Field modified', `Applied FX rate ${code}: ${(a.fxOverrides[code] ?? 0).toFixed(4)} -> ${(b.fxOverrides[code] ?? 0).toFixed(4)}`);
     }
   }
+  for (const g of new Set([...Object.keys(a.gradeRateOverrides ?? {}), ...Object.keys(b.gradeRateOverrides ?? {})])) {
+    if (a.gradeRateOverrides?.[g] !== b.gradeRateOverrides?.[g]) {
+      push('Resource Plan', 'Field modified', `Band ${g} day rate (iRate): ${n(a.gradeRateOverrides?.[g] ?? 0)} -> ${n(b.gradeRateOverrides?.[g] ?? 0)}`);
+    }
+  }
 
   // ---- Quote lines (margin belongs to Working) ----
   const qa = byId(a.quoteLines);
@@ -126,6 +131,13 @@ export function detailedDiff(a: BusinessCaseState, b: BusinessCaseState): Change
   }
   for (const [id, o] of qa) {
     if (!qb.has(id)) push('Basic Info', 'Quote line deleted', `Quote Line ${id}: ${o.solutionOffering} (${o.projectType}), including its product and labour lines`);
+  }
+
+  if (a.summaryRemarks !== b.summaryRemarks) {
+    push('Summary', 'Field modified', `Remarks: ${q(a.summaryRemarks || '(empty)')} -> ${q(b.summaryRemarks || '(empty)')}`);
+  }
+  if (a.billingFrequency !== b.billingFrequency) {
+    push('Basic Info', 'Field modified', `Billing frequency: ${a.billingFrequency} -> ${b.billingFrequency} (TCV re-divided evenly)`);
   }
 
   // ---- Billing plan ----
