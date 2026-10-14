@@ -1,0 +1,131 @@
+/* TendrAI v2 additions on top of the shared stylesheet: left-nav layout and
+   the few v2-only atoms. No new colours or fonts - tokens only. */
+
+.v2-app { display: flex; flex-direction: column; height: 100vh; }
+.v2-shell { display: flex; flex: 1; min-height: 0; }
+
+.v2-nav {
+  width: 208px; flex: none; border-right: 1px solid var(--border); background: var(--surface);
+  padding: var(--sp-3) var(--sp-2); display: flex; flex-direction: column; gap: 2px; overflow-y: auto;
+}
+.v2-nav button {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  background: none; border: none; cursor: pointer; font: inherit; font-size: var(--fs-dense);
+  font-weight: 600; color: var(--ink-secondary); padding: 8px 10px; border-radius: var(--radius);
+}
+.v2-nav button:hover { background: var(--surface-subtle); color: var(--ink); }
+.v2-nav button.active { background: var(--brand-purple-subtle); color: var(--brand-purple); }
+
+.v2-appname { font-weight: 700; color: var(--brand-purple); font-size: 15px; margin-left: 10px; }
+.v2-demo-chip {
+  margin-left: auto; background: var(--warning-tint); color: var(--warning); border: 1px dashed var(--warning);
+  border-radius: var(--radius); padding: 2px 10px; font-size: var(--fs-label); font-weight: 600; cursor: help;
+}
+.v2-role { display: flex; align-items: center; gap: 8px; font-size: var(--fs-label); font-weight: 600; color: var(--ink-secondary); }
+.v2-role select { font: inherit; padding: 5px 8px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--ink); }
+
+/* The topbar in v2 has no center nav; keep its items in one row */
+.v2-app .topbar { display: flex; align-items: center; gap: var(--sp-4); }
+
+/* v2 has no business-case bar above the tabs: sticky tabs sit at the very top */
+.v2-app .subtabs-sticky { top: 0; }
+
+/* v2 badges and chips (token colours only) */
+.badge-overdue { background: var(--error-tint); color: var(--error); border: 1px solid var(--error); }
+.badge-neutral { background: var(--surface); color: var(--ink-secondary); border: 1px solid var(--border-strong); }
+.pill-review { background: var(--warning-tint); color: var(--warning); }
+.pill-neutral { background: var(--surface-subtle); color: var(--ink-secondary); }
+.pill-archived { background: var(--surface-subtle); color: var(--ink-secondary); border: 1px dashed var(--border-strong); }
+
+.cat-chip {
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: 999px;
+  padding: 4px 12px; font: inherit; font-size: var(--fs-label); font-weight: 600; cursor: pointer;
+  color: var(--ink-secondary);
+}
+.cat-chip.on { background: var(--brand-purple-subtle); border-color: var(--brand-purple); color: var(--brand-purple); }
+.cat-chip b { font-variant-numeric: tabular-nums; }
+
+.check-inline { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-dense); }
+
+.link-btn {
+  background: none; border: none; cursor: pointer; font: inherit; font-size: var(--fs-label);
+  color: var(--brand-purple); padding: 0; display: inline-flex; align-items: center; gap: 4px;
+  text-decoration: underline; text-underline-offset: 2px; margin-right: 8px;
+}
+
+.ref-issue {
+  margin-top: 4px; padding: 5px 9px; border: 1px solid var(--warning); border-left-width: 3px;
+  background: var(--warning-tint); border-radius: var(--radius); font-size: var(--fs-label);
+}
+.ref-issue svg { vertical-align: -2px; }
+
+.diff-chip {
+  display: inline-flex; align-items: center; gap: 4px; border-radius: var(--radius);
+  padding: 1px 8px; font-size: var(--fs-label); font-weight: 600; border: 1px solid;
+}
+.diff-added { background: var(--success-tint); color: var(--success); border-color: var(--success); }
+.diff-removed { background: var(--error-tint); color: var(--error); border-color: var(--error); }
+.diff-modified { background: var(--warning-tint); color: var(--warning); border-color: var(--warning); }
+
+.mapping-panel { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); margin: var(--sp-3) 0; }
+.mapping-panel summary { cursor: pointer; padding: 8px 12px; font-weight: 600; color: var(--ink-secondary); }
+.mapping-panel .two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--sp-3); padding: var(--sp-2) var(--sp-3) var(--sp-3); }
+
+.row-selected td { background: var(--brand-purple-subtle); }
+
+@media (max-width: 860px) {
+  .v2-nav { width: 56px; }
+  .v2-nav button { justify-content: center; }
+  .v2-nav button span { display: none; }
+}
+
+/* ---- Fixed-height list pages (Tenders, Historical data) --------------------
+   The table viewport fills the available height; rows-per-page adapt via a
+   ResizeObserver; the pager footer is always visible; the page never scrolls. */
+main:has(> .fill-page) { overflow: hidden; padding-bottom: var(--sp-2); display: flex; flex-direction: column; }
+.fill-page { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.fill-page .table-viewport { flex: 1; min-height: 0; overflow: hidden; }
+.fill-page .pager { margin: var(--sp-2) 0 0; flex: none; }
+
+/* ---- Processing job panel --------------------------------------------------- */
+.job-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--sp-3) var(--sp-4); margin-bottom: var(--sp-3); }
+.job-panel-head { display: flex; align-items: baseline; gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-2); }
+.job-stage-count { font-weight: 600; color: var(--brand-purple); font-variant-numeric: tabular-nums; }
+
+/* ---- Suggested value chips ("Suggested, please confirm") -------------------- */
+.suggestion-row { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.suggestion-value { font-weight: 600; font-family: 'IBM Plex Mono', Consolas, monospace; font-size: var(--fs-dense); }
+
+/* ---- Tender detail meta row -------------------------------------------------- */
+.detail-meta { display: flex; gap: var(--sp-4); flex-wrap: wrap; color: var(--ink-secondary); font-size: var(--fs-dense); margin-top: 4px; align-items: center; }
+.detail-meta b { color: var(--ink); font-weight: 600; }
+
+/* Needs-attention cell in the tender list */
+.attn { display: inline-flex; align-items: center; gap: 5px; color: var(--warning); font-size: var(--fs-label); font-weight: 600; }
+.attn svg { flex: none; }
+.attn-ok { color: var(--ink-secondary); font-weight: 400; }
+
+/* A label styled as a button that is currently unavailable (file inputs) */
+.btn-disabled-label { opacity: 0.55; cursor: not-allowed; }
+
+/* Required-field marker in forms */
+.req { color: var(--error); margin-left: 2px; }
+
+/* Inline business case workbook viewer (DRB view) */
+.drb-bc-viewer {
+  height: calc(100vh - 330px); min-height: 360px; border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden; display: flex; background: var(--surface);
+}
+.drb-bc-viewer .spreadsheet-viewer { flex: 1; min-width: 0; min-height: 0; }
+
+/* Won-TCV summary card above the tender list (controls sit above the card) */
+.tcv-stack { display: flex; flex-direction: column; gap: var(--sp-2); margin-bottom: var(--sp-2); }
+.tcv-stack .kpi { align-self: flex-start; }
+.tcv-controls { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+
+/* MSPO mapping edit cells */
+.map-range-input { width: 110px; }
+
+/* Demo role switcher in the top bar */
+.role-switch { display: flex; align-items: center; gap: 6px; font-size: var(--fs-label); font-weight: 600; color: var(--ink-secondary); white-space: nowrap; }
+.role-switch select { font: inherit; font-size: var(--fs-label); padding: 4px 6px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--ink); max-width: 170px; }
