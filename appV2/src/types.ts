@@ -38,6 +38,8 @@ export type PackDocStatus =
 export interface PackDoc {
   id: string;
   name: string;
+  /** file size in bytes as uploaded (the duplicate check uses name + size) */
+  sizeBytes?: number;
   role: PackDocRole;
   pages: number; // 0 = not known yet (text not extracted)
   status: PackDocStatus;
@@ -118,6 +120,16 @@ export interface Clause {
   reviewState?: ExtractReviewState;
   compliance: ComplianceStatus;
   response: string;
+  /** earlier compliance values and remarks, oldest first */
+  history?: ClauseChange[];
+}
+
+export interface ClauseChange {
+  ts: string; // ISO
+  by: string;
+  field: 'Compliance' | 'Remark';
+  from: string;
+  to: string;
 }
 
 // ---- Business case versions ------------------------------------------------
@@ -136,9 +148,13 @@ export interface BcResource {
   id: string;
   ql: number;
   role: string;
+  /** Resource Plan remarks column (H), the MSPO Skill */
+  skill?: string;
   grade: string;
   team: string;
   mandays: number;
+  /** man-days per fiscal-year column (I8 onward), first FY first */
+  fyMandays?: number[];
   dayRate: number;
   total: number;
 }
@@ -191,14 +207,24 @@ export interface BcVersion {
 
 export type Agency = 'MHA' | 'ATFM' | 'Generic';
 
+/** A superseded version of a library item (template, certificate, boilerplate). */
+export interface LibraryVersion {
+  version: string;
+  updated: string; // ISO date
+  uploadedBy: string;
+}
+
 export interface TemplateDoc {
   id: string;
   name: string;
   agency: Agency;
-  type: 'Compliance table' | 'Cover letter' | 'Company profile' | 'Form' | 'MSPO plan';
+  type: 'Compliance table' | 'Cover letter' | 'Company profile' | 'Form' | 'Document formatting';
   version: string;
   updated: string;
+  uploadedBy: string;
   usedBy: string[]; // tender ids
+  /** older versions, newest first; only the current version is matched to tenders */
+  history?: LibraryVersion[];
 }
 
 /** Result of "Find matching templates" for one tender. The library is empty
@@ -223,8 +249,18 @@ export interface Boilerplate {
   type: 'Company background' | 'Certification' | 'CV';
   version: string;
   owner: string;
+  uploadedBy: string;
+  updated: string; // ISO date
+  /** older versions, newest first */
+  history?: LibraryVersion[];
   /** certification expiry (shown with an expiring/expired warning) */
   expires?: string;
+  /** certification: who issued it, its number and issue date */
+  issuer?: string;
+  certNumber?: string;
+  issued?: string;
+  /** boilerplate: topics it covers, used to find it quickly */
+  tags?: string[];
   /** CV tags for matching qualification requirements */
   role?: string;
   years?: number;
@@ -237,6 +273,22 @@ export interface GenDoc {
   status: 'Not generated' | 'Generated' | 'Needs review';
   autoFilled: string[];
   manual: string[];
+}
+
+// ---- Audit log ----------------------------------------------------------------
+
+/** One user (or system) action. Every dispatched state change is logged. */
+export interface AuditEntry {
+  id: string;
+  ts: string; // ISO
+  user: string;
+  role: string;
+  action: string;
+  detail: string;
+  /** tender reference (GeBIZ ref, else title) the action relates to */
+  tender?: string;
+  /** app area, e.g. Documents, Clauses, Business case, Templates */
+  section?: string;
 }
 
 // ---- Repository and backup --------------------------------------------------
@@ -297,10 +349,17 @@ export interface Tender {
   quals: Qualification[];
   clauses: Clause[];
   templateSearch?: TemplateSearch;
-  /** user edits to the MSPO field mapping: which business case tab and cell
-   *  range (from -> to, "to" optional for single cells) fills each template
-   *  column. Key: `${plan}:${target}` */
+  /** user edits to the MSPO field mapping: which business case tab and first
+   *  cell fills each template column. Key: `${plan}:${target}` */
   mspoMapping?: Record<string, { tab: string; from: string; to?: string }>;
+  /** rows in THIS business case per MSPO plan (where each range ends) */
+  mspoRows?: Partial<Record<'product' | 'resource' | 'billing', number>>;
+  /** the quote line created in MSPO; written to every row of all three plans */
+  mspoQuoteLine?: string;
+  /** fiscal-year columns in THIS business case (Quantity / Fiscal Year ranges) */
+  mspoFyCount?: number;
+  /** man-days one person works per month (resource plan row split) */
+  mspoDaysPerMonth?: number;
   bcVersions: BcVersion[];
   genDocs: GenDoc[];
   drbOutcome?: 'Won' | 'Lost' | 'Awaiting result';

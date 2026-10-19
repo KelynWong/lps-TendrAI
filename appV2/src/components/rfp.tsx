@@ -8,15 +8,19 @@
 // failed documents carry a reason and a Retry, and changing the document set
 // after a run marks the results out of date instead of mutating them.
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Circle,
   Download,
   Eye,
+  FileText,
   FileUp,
   GripVertical,
+  History,
   Inbox,
   Loader2,
   RefreshCw,
@@ -28,14 +32,19 @@ import type { Clause, ClauseCategory, PackDoc, PackDocRole, Tender } from '../ty
 import { PROCESS_STAGES } from '../types';
 import { canDo } from '../config';
 import { useStore } from '../state/store';
-import { useCitation } from '../ui/citation';
+import { useCitation, type CitationInfo } from '../ui/citation';
+import { LibraryUpload } from './library';
+import { writeXlsxWithDropdowns } from '../lib/xlsxDropdown';
+import { UploadDialog, type StagedFile } from './upload';
 import { SortTh, StatusPill, TextCell, useColFilters, useSort } from './common';
 import { Banner, Button, ConfirmDialog, EmptyState, IconButton, TabsBar } from '../ui/ui';
 import { useToast } from '../ui/toast';
-import { ts } from '../lib/format';
+import { dateShort, ts } from '../lib/format';
+import { useLeaveGuard, useUnsavedChanges } from '../lib/leaveGuard';
 
 const DOC_ROLES: PackDocRole[] = ['General Requirements', 'Technical Specification', 'Commercial Conditions', 'Legal Conditions', 'Forms and Annexes', 'Unclassified'];
 const CATEGORIES: ClauseCategory[] = ['Commercial', 'Technical', 'Legal', 'Finance', 'HR'];
+const COMPLIANCE_OPTIONS: Clause['compliance'][] = ['Unset', 'Comply', 'Partially comply', 'Do not comply', 'Clarify'];
 
 /** Demo files exist for two of the mock documents; everything else renders the
  *  built-in page viewer (with page navigation) instead of a stale stand-in. */
@@ -45,6 +54,55 @@ const demoSourceUrl = (sourceDoc: string) => {
   if (s === 'technical specification.pdf') return '/mock-documents/technical-specification.pdf';
   return undefined;
 };
+
+/** Builds the source-viewer citation for an extracted item: document, clause,
+ *  page, and a few sentences either side of the passage. Neighbouring text
+ *  comes from the clauses extracted from the same document; the live system
+ *  takes it straight from the document text. */
+function clausesInDoc(t: Tender, sourceDoc: string) {
+  return t.clauses.filter((c) => c.sourceDoc === sourceDoc).sort((a, b) => a.page - b.page);
+}
+
+/** Page a cited clause sits on: the extracted clause's page when known,
+ *  otherwise estimated from the clause's section number. */
+function citedPage(t: Tender, sourceDoc: string, clause: string): number {
+  return clausesInDoc(t, sourceDoc).find((c) => c.number === clause)?.page
+    ?? Math.max(1, 2 + 2 * (parseInt(clause, 10) || 1));
+}
+
+function sourceCitation(
+  t: Tender,
+  item: { sourceDoc: string; clause: string; excerpt: string; page?: number },
+): CitationInfo {
+  const sameDoc = clausesInDoc(t, item.sourceDoc);
+  const idx = sameDoc.findIndex((c) => c.number === item.clause || c.text === item.excerpt);
+  const page = item.page ?? citedPage(t, item.sourceDoc, item.clause);
+  const cite = (c?: Clause) => (c ? `${c.number} ${c.text}` : undefined);
+  // show the document's own wording when the cited clause was extracted;
+  // checklist and qualification items are summaries of it
+  const passage = idx >= 0 ? sameDoc[idx].text : item.excerpt;
+  const before = idx > 0
+    ? [cite(sameDoc[idx - 2]), cite(sameDoc[idx - 1])].filter(Boolean) as string[]
+    : ['Tenderers shall read this section together with the Conditions of Contract and any clarifications issued by the Authority.'];
+  const after = idx >= 0 && idx < sameDoc.length - 1
+    ? [cite(sameDoc[idx + 1]), cite(sameDoc[idx + 2])].filter(Boolean) as string[]
+    : ['Submissions that do not meet this requirement may be disregarded at the Authority\'s discretion.'];
+  const pageCount = t.pack.find((d) => d.name === item.sourceDoc)?.pages || undefined;
+  return {
+    docId: item.sourceDoc,
+    title: item.sourceDoc,
+    fileName: item.sourceDoc,
+    documentUrl: demoSourceUrl(item.sourceDoc),
+    similarity: 1,
+    source: 'tender',
+    tab: `Clause ${item.clause} · page ${page}`,
+    page,
+    pageCount: pageCount && pageCount >= page ? pageCount : undefined,
+    excerpt: passage,
+    contextBefore: before,
+    contextAfter: after,
+  };
+}
 
 /** A tender with a recorded outcome is read-only (its record lives on in the
  *  repository); so is an archived one. */
@@ -154,10 +212,7 @@ function JobPanel({ t }: { t: Tender }) {
 export function PackSection({ t }: { t: Tender }) {
   const { state, dispatch } = useStore();
   const toast = useToast();
-  const [uploadQueue, setUploadQueue] = useState<PackDoc[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const [uploadTotal, setUploadTotal] = useState(0);
-  const [uploadedCount, setUploadedCount] = useState(0);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const [deleteDoc, setDeleteDoc] = useState<PackDoc | null>(null);
   const [draggedDocId, setDraggedDocId] = useState<string | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
@@ -166,28 +221,19 @@ export function PackSection({ t }: { t: Tender }) {
   const { sort, toggle, apply } = useSort();
   const packFilters = useColFilters();
 
-  useEffect(() => {
-    if (!uploadQueue.length) return;
-    setUploading(true);
-    const next = uploadQueue[0];
-    const timer = window.setTimeout(() => {
-      dispatch({ type: 'add-pack-docs', tenderId: t.id, docs: [next] });
-      setUploadQueue((queue) => queue.slice(1));
-      setUploadedCount((count) => count + 1);
-      if (uploadQueue.length === 1) {
-        setUploading(false);
-        setUploadTotal(0);
-        setUploadedCount(0);
-        toast.push('success', 'Documents stored', 'Files are stored as uploaded - nothing is processed until you start processing.');
-      }
-    }, 650);
-    return () => window.clearTimeout(timer);
-  }, [dispatch, t.id, toast, uploadQueue]);
 
-  const startProcessing = () => {
+  const [confirmReprocess, setConfirmReprocess] = useState(false);
+  const runProcessing = () => {
     dispatch({ type: 'start-processing', tenderId: t.id });
     toast.push('info', 'Processing started', 'One job runs per tender. Changes to the document set are locked until it finishes.');
   };
+  // Reprocessing regenerates extracted results, so warn first whenever there
+  // are results (and possibly human edits) to regenerate.
+  const hasResults = t.clauses.length + t.checklist.length + t.quals.length > 0;
+  const startProcessing = () => (hasResults ? setConfirmReprocess(true) : runProcessing());
+  const withCompliance = t.clauses.filter((c) => c.compliance !== 'Unset').length;
+  const withRemarks = t.clauses.filter((c) => c.response.trim()).length;
+  const withDrafts = t.checklist.filter((k) => k.draft).length;
 
   const retryDoc = (doc: PackDoc) => {
     setRetrying(doc.id);
@@ -201,17 +247,6 @@ export function PackSection({ t }: { t: Tender }) {
     }, 2400);
   };
 
-  const uploadProgress = uploading && uploadQueue.length > 0 ? (
-    <div className="upload-progress" aria-live="polite">
-      <div className="upload-progress-label">
-        <span>Uploading {uploadQueue[0].name}</span>
-        <span>{uploadedCount} of {uploadTotal}</span>
-      </div>
-      <div className="upload-progress-track">
-        <div className="upload-progress-bar" style={{ width: `${uploadTotal ? (uploadedCount / uploadTotal) * 100 : 0}%` }} />
-      </div>
-    </div>
-  ) : null;
 
   const packAccessors = {
     document: (d: PackDoc) => d.name,
@@ -230,6 +265,7 @@ export function PackSection({ t }: { t: Tender }) {
 
   // what the primary action is right now, and why it might be unavailable
   const hasDocs = t.pack.length > 0;
+  const noPermission = isTenderLocked(t) ? 'This tender is locked - documents can no longer be changed' : 'Only the Bidding Manager uploads and processes the tender documents';
   const processLabel = t.processFailed ? 'Retry processing' : t.outOfDate ? 'Reprocess documents' : t.lastProcessedAt ? 'Reprocess documents' : 'Process documents';
   const processDisabledReason = jobRunning
     ? 'A processing job is already running for this tender'
@@ -250,46 +286,30 @@ export function PackSection({ t }: { t: Tender }) {
 
   return (
     <section>
-      <div className="section-heading">
+      <div className="section-heading pack-toolbar">
         <div className="muted small">
           {t.pack.length === 0
-            ? 'Upload the tender pack (up to about 30 PDFs). Files are stored immediately; processing is a separate step.'
+            ? 'Upload the tender pack (PDF, Word or Excel). Files are stored immediately; processing is a separate step.'
             : t.lastProcessedAt
               ? <>Last processed {ts(t.lastProcessedAt)}.</>
               : 'Documents are stored but not processed yet.'}
         </div>
         <div className="section-heading-actions document-actions">
-          {canUpload && (
-            <>
-              <input
-                type="file"
-                multiple
-                className="sr-only"
-                id={`pack-upload-${t.id}`}
-                aria-label="Add documents to this pack"
-                disabled={jobRunning}
-                onChange={(e) => {
-                  addFiles(e.target.files);
-                  e.target.value = '';
-                }}
-              />
-              <label
-                htmlFor={`pack-upload-${t.id}`}
-                className={`btn btn-secondary btn-compact ${jobRunning ? 'btn-disabled-label' : ''}`}
-                title={jobRunning ? 'Locked while a processing job is running' : undefined}
-                aria-disabled={jobRunning}
-                onClick={(e) => { if (jobRunning) e.preventDefault(); }}
-              >
-                <FileUp size={14} aria-hidden /> Add documents
-              </label>
-            </>
-          )}
-          {!jobRunning && canUpload && hasDocs && !t.outOfDate && (
+          <Button
+            compact
+            icon={FileUp}
+            disabled={!canUpload || jobRunning}
+            title={!canUpload ? noPermission : jobRunning ? 'Locked while a processing job is running' : undefined}
+            onClick={() => setUploadOpen(true)}
+          >
+            Add documents
+          </Button>
+          {!jobRunning && !t.outOfDate && (
             <Button
               variant="primary"
               compact
-              disabled={!!processDisabledReason}
-              title={processDisabledReason}
+              disabled={!canUpload || !!processDisabledReason}
+              title={!canUpload ? noPermission : processDisabledReason}
               onClick={startProcessing}
             >
               {processLabel}
@@ -306,7 +326,6 @@ export function PackSection({ t }: { t: Tender }) {
       <OutOfDateBanner t={t} onReprocess={startProcessing} canProcess={canUpload && !jobRunning} />
       <PartialResultsBanner t={t} />
       <JobPanel t={t} />
-      {uploadProgress}
 
       <table className="grid">
         <thead>
@@ -396,17 +415,50 @@ export function PackSection({ t }: { t: Tender }) {
               <EmptyState
                 icon={Inbox}
                 title="No documents yet"
-                body={canUpload ? 'Add the tender pack documents, then start processing.' : 'The Bidding Manager uploads the tender pack here.'}
-                action={canUpload ? (
-                  <label htmlFor={`pack-upload-${t.id}`} className="btn btn-primary">
-                    <FileUp size={16} aria-hidden /> Add documents
-                  </label>
-                ) : undefined}
+                body={canUpload ? 'Use Add documents above to upload the tender pack, then start processing.' : 'The Bidding Manager uploads the tender pack here.'}
               />
             </td></tr>
           )}
         </tbody>
       </table>
+
+      <UploadDialog
+        open={uploadOpen}
+        title="Add documents to the tender pack"
+        multiple
+        accept=".pdf,.doc,.docx,.xls,.xlsx,.xlsm"
+        hint="PDF, Word or Excel formats accepted. Files are stored as uploaded; processing is a separate step."
+        confirmLabel="Confirm upload"
+        onClose={() => setUploadOpen(false)}
+        onConfirm={confirmUpload}
+        rejectFile={(f) => (t.pack.some((d) => d.name === f.name && d.sizeBytes === f.size)
+          ? 'the same file (name and size) is already in this tender pack' : undefined)}
+      />
+
+      <ConfirmDialog
+        open={confirmReprocess}
+        title="Reprocess the tender documents?"
+        confirmLabel="Reprocess documents"
+        onClose={() => setConfirmReprocess(false)}
+        onConfirm={() => { setConfirmReprocess(false); runProcessing(); }}
+      >
+        <p>
+          Reprocessing regenerates everything extracted from the documents:
+          the <b>{t.checklist.length} submission documents</b>, <b>{t.quals.length} qualification
+          requirements</b> and <b>{t.clauses.length} clauses</b>.
+        </p>
+        {(withCompliance > 0 || withRemarks > 0 || withDrafts > 0) && (
+          <div className="ref-issue" role="status">
+            <AlertTriangle size={13} aria-hidden /> Work already done on these results:
+            {withCompliance > 0 && <> {withCompliance} clause{withCompliance === 1 ? ' has a' : 's have a'} compliance status;</>}
+            {withRemarks > 0 && <> {withRemarks} clause{withRemarks === 1 ? ' has a' : 's have'} remark{withRemarks === 1 ? '' : 's'};</>}
+            {withDrafts > 0 && <> {withDrafts} submission document{withDrafts === 1 ? ' has a' : 's have'} generated draft{withDrafts === 1 ? '' : 's'};</>}
+            {' '}these are carried over where the same item is found again, but anything on items
+            that are no longer found will be lost.
+          </div>
+        )}
+        <p className="muted small">The job takes minutes to about 20 minutes for large packs. Results stay visible until it finishes.</p>
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={!!deleteDoc}
@@ -442,18 +494,20 @@ export function PackSection({ t }: { t: Tender }) {
     </section>
   );
 
-  function addFiles(files: FileList | null) {
-    if (!files?.length) return;
-    const docs: PackDoc[] = Array.from(files).map((file, index) => ({
+  function confirmUpload(staged: StagedFile[]) {
+    const docs: PackDoc[] = staged.map((s, index) => ({
       id: `upload-${Date.now()}-${index}`,
-      name: file.name,
+      name: s.file.name,
+      sizeBytes: s.file.size,
       role: 'Unclassified',
       pages: 0,
       status: 'Uploaded',
     }));
-    setUploadQueue((queue) => [...queue, ...docs]);
-    setUploadTotal((total) => total + docs.length);
-    setUploadedCount((count) => uploadQueue.length ? count : 0);
+    dispatch({ type: 'add-pack-docs', tenderId: t.id, docs });
+    setUploadOpen(false);
+    toast.push('success', `${docs.length} document${docs.length > 1 ? 's' : ''} uploaded`, t.lastProcessedAt
+      ? 'Stored. Results are now out of date - reprocess when the pack is complete.'
+      : 'Stored as uploaded - nothing is processed until you start processing.');
   }
 
   function fileType(name: string) {
@@ -465,28 +519,32 @@ export function PackSection({ t }: { t: Tender }) {
 // ---- Tender pack tab strip -----------------------------------------------------
 
 export function TenderPackSection({ t }: { t: Tender }) {
-  const [tab, setTab] = useState('upload');
+  const { state, dispatch } = useStore();
+  // "Back to tender" reopens the tab the user left from
+  const [tab, setTab] = useState(() => state.packTabRequest ?? 'upload');
+  const { requestLeave } = useLeaveGuard();
+  useEffect(() => { if (state.packTabRequest) dispatch({ type: 'clear-pack-tab-request' }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const extractionAvailable = t.clauses.length > 0 || t.checklist.length > 0;
   useEffect(() => {
     if (!extractionAvailable && tab !== 'upload') setTab('upload');
   }, [extractionAvailable, tab]);
+  const lockedHint = t.pack.length === 0
+    ? 'Upload and process the tender documents to unlock this tab'
+    : 'Unlocks once the documents have been processed';
   return (
     <section className="tender-pack-tabs">
       <TabsBar
         tabs={[
           { key: 'upload', label: 'Documents' },
-          { key: 'checklist', label: 'Submission', disabled: !extractionAvailable },
-          { key: 'quals', label: 'Qualification', disabled: !extractionAvailable },
-          { key: 'clauses', label: 'Clauses', disabled: !extractionAvailable },
+          { key: 'checklist', label: 'Submission', disabled: !extractionAvailable, disabledHint: lockedHint },
+          { key: 'quals', label: 'Qualification', disabled: !extractionAvailable, disabledHint: lockedHint },
+          { key: 'clauses', label: 'Clauses', disabled: !extractionAvailable, disabledHint: lockedHint },
         ]}
         active={tab}
-        onChange={setTab}
+        onChange={(k) => requestLeave(() => setTab(k))}
         sticky
         stickyBelow
       />
-      {!extractionAvailable && tab === 'upload' && t.pack.length > 0 && !t.job && !t.processFailed && (
-        <p className="muted small">Submission, qualification and clauses unlock once the documents have been processed.</p>
-      )}
       {tab === 'upload' && <PackSection t={t} />}
       {tab === 'checklist' && <SubmissionSection t={t} />}
       {tab === 'quals' && <QualSection t={t} />}
@@ -540,7 +598,7 @@ export function SubmissionSection({ t }: { t: Tender }) {
         reason: `Agency name matches ${tpl.agency}`,
       }));
       const haveTypes = new Set(agencyTemplates.map((x) => x.type));
-      for (const tpl of state.templates.filter((x) => x.agency === 'Generic' && x.type !== 'MSPO plan')) {
+      for (const tpl of state.templates.filter((x) => x.agency === 'Generic')) {
         if (!haveTypes.has(tpl.type)) {
           matches.push({
             templateId: tpl.id,
@@ -580,12 +638,15 @@ export function SubmissionSection({ t }: { t: Tender }) {
     }, 1600);
   };
 
+  const isSheet = (k: Tender['checklist'][number]) => k.item.toLowerCase().includes('compliance');
+  /** the generated file's name, shown in the table and used for the download */
+  const draftFileName = (k: Tender['checklist'][number]) => `${k.item.replace(/\W+/g, '_').replace(/_+$/, '')}_draft.${isSheet(k) ? 'xls' : 'doc'}`;
   const previewDraft = (k: Tender['checklist'][number]) => {
-    const isCompliance = k.item.toLowerCase().includes('compliance');
+    const isCompliance = isSheet(k);
     show({
       docId: k.id,
       title: `${k.item} (first draft)`,
-      fileName: `${k.item.replace(/\W+/g, '_')}.${isCompliance ? 'xlsx' : 'docx'}`,
+      fileName: draftFileName(k),
       documentUrl: isCompliance ? '/mock-documents/MHA_business_case_demo.xlsm' : '/mock-documents/supplier-response.docx',
       similarity: 1,
       source: 'tender',
@@ -597,10 +658,11 @@ export function SubmissionSection({ t }: { t: Tender }) {
   const downloadDraft = (k: Tender['checklist'][number]) => {
     const tpl = state.templates.find((x) => x.id === k.draft?.templateId);
     const html = `<html><head><meta charset="utf-8"></head><body><h1>${k.item}</h1><p><b>${t.ref || t.name}</b> - ${t.name}</p><p>Template: ${tpl ? `${tpl.name} (v${tpl.version})` : 'generic'}</p><p>First draft generated by TendrAI. Sections that could not be auto-filled are marked [TO COMPLETE].</p></body></html>`;
-    const url = URL.createObjectURL(new Blob([html], { type: 'application/msword' }));
+    const url = URL.createObjectURL(new Blob([html], { type: isSheet(k) ? 'application/vnd.ms-excel' : 'application/msword' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${k.item.replace(/\W+/g, '_')}_draft.doc`;
+    a.download = draftFileName(k);
+    dispatch({ type: 'log', event: { action: 'Draft downloaded', detail: k.item, tenderId: t.id, section: 'Submission' } });
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -615,6 +677,7 @@ export function SubmissionSection({ t }: { t: Tender }) {
             : 'The documents required for submission. Find suitable templates to see which ones can be drafted from the library.'}
         </span>
         <span className="review-toolbar-actions">
+          <LibraryUpload kind="template" returnTo={{ tenderId: t.id, packTab: 'checklist', label: t.name }} />
           {search?.status === 'searching' ? (
             <span className="muted small"><Loader2 size={14} aria-hidden className="spin-icon" /> Searching the template library...</span>
           ) : (
@@ -649,9 +712,9 @@ export function SubmissionSection({ t }: { t: Tender }) {
                 <td><b>{k.item}</b></td>
                 <td className="muted">{k.format}</td>
                 <td className="muted small">
-                  {k.sourceDoc} · clause {k.clause}
+                  {k.sourceDoc} · clause {k.clause} · p.{citedPage(t, k.sourceDoc, k.clause)}
                   <div>
-                    <button className="link-btn" type="button" onClick={() => show({ docId: k.sourceDoc, title: k.sourceDoc, fileName: k.sourceDoc, documentUrl: demoSourceUrl(k.sourceDoc), similarity: 1, source: 'tender', tab: `Clause ${k.clause}`, page: 6, pageCount: t.pack.find((d) => d.name === k.sourceDoc)?.pages || undefined, excerpt: k.item, context: k.format })}>View source</button>
+                    <button className="link-btn" type="button" onClick={() => show(sourceCitation(t, { sourceDoc: k.sourceDoc, clause: k.clause, excerpt: k.item }))}>View source</button>
                   </div>
                 </td>
                 <td>
@@ -666,7 +729,7 @@ export function SubmissionSection({ t }: { t: Tender }) {
                     }}
                   >
                     <option value="">None - prepared manually</option>
-                    {state.templates.filter((tpl) => tpl.type !== 'MSPO plan').map((tpl) => (
+                    {state.templates.map((tpl) => (
                       <option key={tpl.id} value={tpl.id}>{tpl.name} ({tpl.agency})</option>
                     ))}
                   </select>
@@ -676,9 +739,11 @@ export function SubmissionSection({ t }: { t: Tender }) {
                   {generating === k.id ? (
                     <StatusPill value="Processing" />
                   ) : k.draft ? (
-                    <span className="row-actions">
+                    <span className="draft-file">
+                      <FileText size={14} aria-hidden className="muted" />
+                      <span className="draft-file-name" title={draftFileName(k)}>{draftFileName(k)}</span>
                       <IconButton label={`Preview draft of ${k.item}`} icon={Eye} onClick={() => previewDraft(k)} />
-                      <Button compact icon={Download} onClick={() => downloadDraft(k)}>Download</Button>
+                      <IconButton label={`Download draft of ${k.item}`} icon={Download} onClick={() => downloadDraft(k)} />
                     </span>
                   ) : k.templateId ? (
                     <Button
@@ -738,13 +803,57 @@ const QUAL_KIND_CLASS: Record<string, string> = {
 const QUAL_KINDS = ['Role', 'Experience', 'Certification', 'Past project'] as const;
 
 export function QualSection({ t }: { t: Tender }) {
+  const { state, dispatch } = useStore();
+  const toast = useToast();
   const { show } = useCitation();
   const [kind, setKind] = useState('');
+  const [matching, setMatching] = useState(false);
+  const canLink = canDo.generateDocs(state.role) && !isTenderLocked(t);
   if (t.quals.length === 0) {
     return <EmptyState icon={Inbox} title="No qualification requirements yet" body="Roles, experience, certifications and past projects are extracted once the pack is processed." />;
   }
   const counts = QUAL_KINDS.map((k) => ({ k, n: t.quals.filter((q) => q.kind === k).length }));
   const shown = kind ? t.quals.filter((q) => q.kind === kind) : t.quals;
+  const today = new Date().toISOString().slice(0, 10);
+  const certs = state.boilerplate.filter((b) => b.type === 'Certification');
+
+  const certQuals = t.quals.filter((q) => q.kind === 'Certification');
+  /** Certificate linked to a certification requirement (picked or matched). */
+  const certFor = (q: Tender['quals'][number]) =>
+    q.kind === 'Certification' ? certs.find((c) => c.id === q.evidence) : undefined;
+  /** Library certificate whose name appears in the requirement wording. */
+  const suggestCert = (q: Tender['quals'][number]) => {
+    const text = q.requirement.toLowerCase();
+    return certs.find((c) => text.includes(c.name.toLowerCase().replace(/ certificate$/, '')));
+  };
+  const findMatches = () => {
+    setMatching(true);
+    window.setTimeout(() => {
+      let linked = 0;
+      for (const q of certQuals) {
+        const m = suggestCert(q);
+        if (m) {
+          linked += 1;
+          if (m.id !== q.evidence) dispatch({ type: 'patch-qual', tenderId: t.id, qualId: q.id, patch: { evidence: m.id } });
+        }
+      }
+      setMatching(false);
+      toast.push(linked === certQuals.length ? 'success' : 'info', 'Certificate search finished', `${linked} of ${certQuals.length} certification requirement${certQuals.length === 1 ? '' : 's'} matched to a library certificate${linked < certQuals.length ? ' - upload or pick the rest manually' : ''}.`);
+    }, 1300);
+  };
+  const previewCert = (c: typeof certs[number]) => show({
+    docId: c.id, title: c.name, fileName: `${c.name.replace(/\W+/g, '_')}.pdf`,
+    documentUrl: '/mock-documents/certificate-demo.pdf', similarity: 1, source: 'tender', tab: `v${c.version}`, excerpt: '',
+  });
+  const downloadCert = (c: typeof certs[number]) => {
+    const a = document.createElement('a');
+    a.href = '/mock-documents/certificate-demo.pdf';
+    a.download = `${c.name.replace(/\W+/g, '_')}_v${c.version}.pdf`;
+    a.click();
+    dispatch({ type: 'log', event: { action: 'Certificate downloaded', detail: `${c.name} v${c.version}`, tenderId: t.id, section: 'Qualification' } });
+    toast.push('success', 'Certificate downloaded', `${c.name} v${c.version}`);
+  };
+
   return (
     <section>
       <PartialResultsBanner t={t} />
@@ -754,21 +863,65 @@ export function QualSection({ t }: { t: Tender }) {
             {k} <b>{n}</b>
           </button>
         ))}
+        <span className="review-toolbar-actions">
+          <LibraryUpload kind="certification" returnTo={{ tenderId: t.id, packTab: 'quals', label: t.name }} />
+          {matching ? (
+            <span className="muted small"><Loader2 size={14} aria-hidden className="spin-icon" /> Searching the certificate library...</span>
+          ) : (
+            <Button
+              variant="secondary"
+              compact
+              icon={Search}
+              disabled={!canLink || certQuals.length === 0}
+              title={!canLink ? 'Only the Bidding Manager links certificates' : certQuals.length === 0 ? 'This tender has no certification requirements' : undefined}
+              onClick={findMatches}
+            >
+              Find matching certificates
+            </Button>
+          )}
+        </span>
       </div>
       <table className="grid">
-        <thead><tr><th>Kind</th><th>Requirement</th><th>Source</th></tr></thead>
+        <thead><tr><th>Kind</th><th>Requirement</th><th>Source</th><th>Certificate on file</th></tr></thead>
         <tbody>
-          {shown.map((q) => (
-            <tr key={q.id}>
-              <td><span className={`pill ${QUAL_KIND_CLASS[q.kind] ?? 'pill-neutral'}`}>{q.kind}</span></td>
-              <td>{q.requirement}</td>
-              <td className="muted small">
-                {q.sourceDoc} · clause {q.clause}{' '}
-                <button className="link-btn" type="button" onClick={() => show({ docId: q.sourceDoc, title: q.sourceDoc, fileName: q.sourceDoc, documentUrl: demoSourceUrl(q.sourceDoc), similarity: 1, source: 'tender', tab: `Clause ${q.clause}`, page: 10, pageCount: t.pack.find((d) => d.name === q.sourceDoc)?.pages || undefined, excerpt: q.requirement })}>View source</button>
-              </td>
-            </tr>
-          ))}
-          {shown.length === 0 && <tr><td colSpan={3} className="muted">No {kind.toLowerCase()} requirements in this tender.</td></tr>}
+          {shown.map((q) => {
+            const cert = certFor(q);
+            return (
+              <tr key={q.id}>
+                <td><span className={`pill ${QUAL_KIND_CLASS[q.kind] ?? 'pill-neutral'}`}>{q.kind}</span></td>
+                <td>{q.requirement}</td>
+                <td className="muted small">
+                  {q.sourceDoc} · clause {q.clause} · p.{citedPage(t, q.sourceDoc, q.clause)}{' '}
+                  <button className="link-btn" type="button" onClick={() => show(sourceCitation(t, { sourceDoc: q.sourceDoc, clause: q.clause, excerpt: q.requirement }))}>View source</button>
+                </td>
+                <td>
+                  {q.kind !== 'Certification' ? (
+                    <span className="muted">-</span>
+                  ) : (
+                    <span className="cert-cell">
+                      <span>
+                        <select
+                          value={cert?.id ?? ''}
+                          disabled={!canLink}
+                          aria-label={`Certificate for ${q.requirement}`}
+                          onChange={(e) => dispatch({ type: 'patch-qual', tenderId: t.id, qualId: q.id, patch: { evidence: e.target.value || undefined } })}
+                        >
+                          <option value="">None linked</option>
+                          {certs.map((c) => <option key={c.id} value={c.id}>{c.name} (v{c.version})</option>)}
+                        </select>
+                        {cert?.expires && cert.expires < today && (
+                          <span className="attn" style={{ display: 'flex' }}><AlertTriangle size={12} aria-hidden /> Expired {dateShort(cert.expires)}</span>
+                        )}
+                      </span>
+                      {cert && <IconButton label={`Preview ${cert.name}`} icon={Eye} onClick={() => previewCert(cert)} />}
+                      {cert && <IconButton label={`Download ${cert.name}`} icon={Download} onClick={() => downloadCert(cert)} />}
+                    </span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+          {shown.length === 0 && <tr><td colSpan={4} className="muted">No {kind.toLowerCase()} requirements in this tender.</td></tr>}
         </tbody>
       </table>
     </section>
@@ -783,6 +936,31 @@ export function ClausesSection({ t }: { t: Tender }) {
   const editable = canDo.editClauses(state.role) && !isTenderLocked(t);
   const [cat, setCat] = useState('');
   const [confirmExport, setConfirmExport] = useState<null | 'excel' | 'word'>(null);
+  // edits are held here until "Save changes" - one audit entry per save
+  const [pending, setPending] = useState<Record<string, Partial<Pick<Clause, 'compliance' | 'category' | 'response'>>>>({});
+  const edit = (c: Clause, patch: Partial<Pick<Clause, 'compliance' | 'category' | 'response'>>) =>
+    setPending((cur) => {
+      const merged = { ...cur[c.id], ...patch };
+      // drop fields that are back to the saved value
+      for (const k of Object.keys(merged) as (keyof typeof merged)[]) if (merged[k] === c[k]) delete merged[k];
+      const next = { ...cur };
+      if (Object.keys(merged).length) next[c.id] = merged; else delete next[c.id];
+      return next;
+    });
+  const pendingRows = Object.keys(pending).length;
+  const pendingFields = Object.values(pending).reduce((n, p) => n + Object.keys(p).length, 0);
+  const saveClauses = () => {
+    dispatch({ type: 'save-clauses', tenderId: t.id, patches: Object.entries(pending).map(([clauseId, patch]) => ({ clauseId, patch })) });
+    toast.push('success', 'Clause changes saved', `${pendingFields} change${pendingFields === 1 ? '' : 's'} on ${pendingRows} clause${pendingRows === 1 ? '' : 's'} saved.`);
+    setPending({});
+  };
+  useUnsavedChanges(pendingRows ? `${pendingFields} unsaved change${pendingFields === 1 ? '' : 's'} on ${pendingRows} clause${pendingRows === 1 ? '' : 's'}` : null, () => setPending({}));
+  const [openHistory, setOpenHistory] = useState<Set<string>>(new Set());
+  const toggleHistory = (id: string) => setOpenHistory((cur) => {
+    const next = new Set(cur);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
   const [doc, setDoc] = useState('');
   const { show } = useCitation();
   const { sort, toggle, apply } = useSort();
@@ -826,13 +1004,19 @@ export function ClausesSection({ t }: { t: Tender }) {
   const exportExcel = () => {
     const wb = XLSX.utils.book_new();
     const rows = t.clauses.map((c) => [c.number, c.text, c.compliance, c.response]);
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    const sheet = XLSX.utils.aoa_to_sheet([
       [`Clauses and compliance - ${t.ref || t.name}`],
       ['Clause', 'Requirement', 'Compliance', 'Remarks'],
       ...rows,
-    ]), 'Clauses');
-    XLSX.writeFile(wb, `${clausesFileName}.xlsx`);
-    toast.push('success', 'Clauses exported', 'Excel file downloaded.');
+    ]);
+    sheet['!cols'] = [{ wch: 10 }, { wch: 80 }, { wch: 18 }, { wch: 50 }];
+    XLSX.utils.book_append_sheet(wb, sheet, 'Clauses');
+    // compliance cells keep the same choices as the table's dropdown
+    writeXlsxWithDropdowns(wb, `${clausesFileName}.xlsx`, [
+      { sqref: `C3:C${2 + Math.max(1, t.clauses.length)}`, options: COMPLIANCE_OPTIONS },
+    ]);
+    toast.push('success', 'Clauses exported', 'Excel file downloaded - the Compliance column has a dropdown on every row.');
+    dispatch({ type: 'log', event: { action: 'Clauses exported', detail: `Excel, ${t.clauses.length} clauses`, tenderId: t.id, section: 'Clauses' } });
   };
   const exportWord = () => {
     const html = `<html><head><meta charset="utf-8"></head><body><h1>Clauses and compliance - ${t.ref || t.name}</h1><table border="1" cellspacing="0" cellpadding="4"><tr><th>Clause</th><th>Requirement</th><th>Compliance</th><th>Remarks</th></tr>${t.clauses.map((c) => `<tr><td>${c.number}</td><td>${c.text}</td><td>${c.compliance}</td><td>${c.response}</td></tr>`).join('')}</table></body></html>`;
@@ -843,16 +1027,38 @@ export function ClausesSection({ t }: { t: Tender }) {
     a.click();
     URL.revokeObjectURL(url);
     toast.push('success', 'Clauses exported', 'Word document downloaded.');
+    dispatch({ type: 'log', event: { action: 'Clauses exported', detail: `Word, ${t.clauses.length} clauses`, tenderId: t.id, section: 'Clauses' } });
   };
 
   return (
     <section>
       <PartialResultsBanner t={t} />
       <div className="review-toolbar">
-        <span className="review-progress">{t.clauses.length} clauses extracted</span>
+        <span className="review-progress">
+          {t.clauses.length} clauses extracted
+          {pendingRows > 0 && <span className="attn" style={{ marginLeft: 12 }}>{pendingFields} unsaved change{pendingFields === 1 ? '' : 's'} on {pendingRows} clause{pendingRows === 1 ? '' : 's'}</span>}
+        </span>
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          <Button compact icon={Download} onClick={() => requestExport('excel')}>Export Excel</Button>
-          <Button compact icon={Download} onClick={() => requestExport('word')}>Export Word</Button>
+          {pendingRows > 0 ? (
+            <>
+              <Button compact onClick={() => setPending({})}>Discard changes</Button>
+              <Button compact variant="primary" onClick={saveClauses}>Save changes</Button>
+            </>
+          ) : (
+            <>
+              <Button compact icon={Download} onClick={() => requestExport('excel')}>Export Excel</Button>
+              <Button compact icon={Download} onClick={() => requestExport('word')}>Export Word</Button>
+              <Button
+                compact
+                variant="primary"
+                icon={History}
+                title="Open the Audit log filtered to the clause changes of this tender"
+                onClick={() => dispatch({ type: 'open-audit', tender: t.ref || t.name, section: 'Clauses', returnTo: { tenderId: t.id, packTab: 'clauses', label: t.name } })}
+              >
+                View history
+              </Button>
+            </>
+          )}
         </span>
       </div>
       <div className="filter-row">
@@ -869,6 +1075,7 @@ export function ClausesSection({ t }: { t: Tender }) {
       <table className="grid">
         <thead>
           <tr>
+            <th aria-label="Change history" />
             <SortTh label="Clause" k="number" sort={sort} onToggle={toggle} {...filterColumn('number')} />
             <SortTh label="Text" k="text" sort={sort} onToggle={toggle} {...filterColumn('text')} />
             <SortTh label="Category" k="category" sort={sort} onToggle={toggle} {...filterColumn('category')} />
@@ -879,7 +1086,21 @@ export function ClausesSection({ t }: { t: Tender }) {
         </thead>
         <tbody>
           {shown.map((c) => (
-            <tr key={c.id}>
+            <Fragment key={c.id}>
+            <tr>
+              <td className="expand-cell">
+                {c.history?.length ? (
+                  <button
+                    className="expand-btn"
+                    aria-expanded={openHistory.has(c.id)}
+                    aria-label={`${openHistory.has(c.id) ? 'Hide' : 'Show'} change history of clause ${c.number}`}
+                    title={`${c.history.length} earlier change${c.history.length > 1 ? 's' : ''}`}
+                    onClick={() => toggleHistory(c.id)}
+                  >
+                    {openHistory.has(c.id) ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
+                  </button>
+                ) : null}
+              </td>
               <td className="mono" style={{ whiteSpace: 'nowrap' }}>{c.number}</td>
               <td className="desc">
                 {c.text}
@@ -896,9 +1117,10 @@ export function ClausesSection({ t }: { t: Tender }) {
               <td>
                 {editable ? (
                   <select
-                    value={c.category}
+                    value={pending[c.id]?.category ?? c.category}
                     aria-label={`Category of clause ${c.number}`}
-                    onChange={(e) => dispatch({ type: 'patch-clause', tenderId: t.id, clauseId: c.id, patch: { category: e.target.value as ClauseCategory } })}
+                    className={pending[c.id]?.category !== undefined ? 'cell-changed' : undefined}
+                    onChange={(e) => edit(c, { category: e.target.value as ClauseCategory })}
                   >
                     {CATEGORIES.map((x) => <option key={x}>{x}</option>)}
                   </select>
@@ -907,7 +1129,7 @@ export function ClausesSection({ t }: { t: Tender }) {
               <td className="muted small">
                 {c.sourceDoc} · p.{c.page}
                 <div>
-                  <button className="link-btn" onClick={() => show({ docId: c.sourceDoc, title: c.sourceDoc, fileName: c.sourceDoc, documentUrl: demoSourceUrl(c.sourceDoc), similarity: 1, source: 'tender', tab: `Clause ${c.number} · page ${c.page}`, page: c.page, pageCount: t.pack.find((d) => d.name === c.sourceDoc)?.pages || undefined, excerpt: c.text })}>
+                  <button className="link-btn" onClick={() => show(sourceCitation(t, { sourceDoc: c.sourceDoc, clause: c.number, excerpt: c.text, page: c.page }))}>
                     View source
                   </button>
                 </div>
@@ -915,20 +1137,44 @@ export function ClausesSection({ t }: { t: Tender }) {
               <td>
                 {editable ? (
                   <select
-                    value={c.compliance}
+                    value={pending[c.id]?.compliance ?? c.compliance}
                     aria-label={`Compliance for clause ${c.number}`}
-                    onChange={(e) => dispatch({ type: 'patch-clause', tenderId: t.id, clauseId: c.id, patch: { compliance: e.target.value as Clause['compliance'] } })}
+                    className={pending[c.id]?.compliance !== undefined ? 'cell-changed' : undefined}
+                    onChange={(e) => edit(c, { compliance: e.target.value as Clause['compliance'] })}
                   >
-                    <option>Unset</option><option>Comply</option><option>Partially comply</option><option>Do not comply</option><option>Clarify</option>
+                    {COMPLIANCE_OPTIONS.map((o) => <option key={o}>{o}</option>)}
                   </select>
                 ) : <StatusPill value={c.compliance} />}
               </td>
-              <td className="desc">
-                <TextCell value={c.response} editable={editable} placeholder="Add remark" onCommit={(v) => dispatch({ type: 'patch-clause', tenderId: t.id, clauseId: c.id, patch: { response: v } })} />
+              <td className={`desc${pending[c.id]?.response !== undefined ? ' cell-changed-td' : ''}`}>
+                <TextCell value={pending[c.id]?.response ?? c.response} editable={editable} placeholder="Add remark" onCommit={(v) => edit(c, { response: v })} />
               </td>
             </tr>
+            {openHistory.has(c.id) && c.history?.length ? (
+              <tr className="expand-row">
+                <td />
+                <td colSpan={6}>
+                  <div className="muted small" style={{ margin: '4px 0' }}>Change history of clause {c.number} (latest first):</div>
+                  <table className="grid narrow">
+                    <thead><tr><th>When</th><th>By</th><th>Field</th><th>Previous value</th><th>Changed to</th></tr></thead>
+                    <tbody>
+                      {[...c.history].reverse().map((h, i) => (
+                        <tr key={i}>
+                          <td className="muted" style={{ whiteSpace: 'nowrap' }}>{ts(h.ts)}</td>
+                          <td style={{ whiteSpace: 'nowrap' }}>{h.by}</td>
+                          <td>{h.field}</td>
+                          <td className="muted">{h.from || <i>(empty)</i>}</td>
+                          <td>{h.to || <i>(empty)</i>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </td>
+              </tr>
+            ) : null}
+            </Fragment>
           ))}
-          {shown.length === 0 && <tr><td colSpan={6} className="muted">No clauses match these filters.</td></tr>}
+          {shown.length === 0 && <tr><td colSpan={7} className="muted">No clauses match these filters.</td></tr>}
         </tbody>
       </table>
 

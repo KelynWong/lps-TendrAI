@@ -17,7 +17,9 @@
 //  t13 agency tender with no agency template in the library (generic offered)
 //  t14 past DRB, Won        t15 past DRB, Lost        t16 closed and archived
 
+import { USERS } from '../config';
 import type {
+  AuditEntry,
   BcBilling,
   BcProduct,
   BcResource,
@@ -59,11 +61,13 @@ const products = (over: Partial<BcProduct>[] = []): BcProduct[] => {
 
 const resources = (over: Partial<BcResource>[] = []): BcResource[] => {
   const base: BcResource[] = [
-    { id: 'r1', ql: 1, role: 'Project Manager', grade: '7', team: 'Insys - Cloud - SG', mandays: 340, dayRate: 980, total: 333200 },
-    { id: 'r2', ql: 1, role: 'System Architect', grade: '8', team: 'Insys - Cloud - SG', mandays: 240, dayRate: 1150, total: 276000 },
-    { id: 'r3', ql: 1, role: 'Analyst Programmer', grade: '4', team: 'MY ODC - AD - MY', mandays: 800, dayRate: 640, total: 512000 },
-    { id: 'r4', ql: 2, role: 'Technical Engineer', grade: '4', team: 'Insys - Non-cloud - SG', mandays: 1000, dayRate: 560, total: 560000 },
-    { id: 'r5', ql: 3, role: 'Security Analyst', grade: '4', team: 'PH ODC - MS - PH', mandays: 252, dayRate: 590, total: 148680 },
+    // man-days per fiscal year (26/27 Sep-Mar 7 months, 27/28, 28/29, 29/30 Apr-Aug 5 months);
+    // one person at 18.5 man-days a month = 129.5 / 222 / 222 / 92.5
+    { id: 'r1', ql: 1, role: 'Project Manager', skill: 'Programme Management', grade: '7', team: 'Insys - Cloud - SG', fyMandays: [129.5, 222, 222, 92.5], mandays: 666, dayRate: 980, total: 652680 },
+    { id: 'r2', ql: 1, role: 'System Architect', skill: 'Solution Architecture', grade: '8', team: 'Insys - Cloud - SG', fyMandays: [129.5, 111, 0, 0], mandays: 240.5, dayRate: 1150, total: 276575 },
+    { id: 'r3', ql: 1, role: 'Analyst Programmer', skill: 'CCaaS Development', grade: '4', team: 'MY ODC - AD - MY', fyMandays: [259, 222, 222, 0], mandays: 703, dayRate: 640, total: 449920 },
+    { id: 'r4', ql: 2, role: 'Helpdesk Officer', skill: 'Onsite Desktop L1', grade: '3', team: 'Insys - Non-cloud - SG', fyMandays: [388.5, 666, 666, 277.5], mandays: 1998, dayRate: 210, total: 419580 },
+    { id: 'r5', ql: 3, role: 'Security Analyst', skill: 'SOC Analyst', grade: '4', team: 'PH ODC - MS - PH', fyMandays: [64.75, 222, 222, 46.25], mandays: 555, dayRate: 590, total: 327450 },
   ];
   return base.map((r) => ({ ...r, ...(over.find((o) => o.id === r.id) ?? {}) }));
 };
@@ -71,7 +75,7 @@ const resources = (over: Partial<BcResource>[] = []): BcResource[] => {
 const billing = (count: number, amount: number, last?: number): BcBilling[] =>
   Array.from({ length: count }, (_, i) => ({
     id: `b${i + 1}`,
-    date: new Date(2026, 3 + i * 3, 1).toISOString().slice(0, 10),
+    date: (() => { const d = new Date(2026, 8 + i * 3, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; })(),
     schedule: `Quarterly billing ${i + 1} of ${count}`,
     amount: i === count - 1 && last !== undefined ? last : amount,
   }));
@@ -85,7 +89,7 @@ const v1: BcVersion = {
   fileName: 'NCCM_business_case_v1.xlsx',
   comment: 'First cut from the workshop',
   data: {
-    header: { tcv: 5350000, productTotal: 2759000, labourTotal: 1829880, marginPct: 16.6, currency: 'SGD', durationMonths: 36, projectStart: '2026-04-01' },
+    header: { tcv: 5350000, productTotal: 2759000, labourTotal: 2126205, marginPct: 16.6, currency: 'SGD', durationMonths: 36, projectStart: '2026-09-01' },
     products: products([{ id: 'p5', ql: 4 }]), // QL4 does not exist
     resources: resources(),
     billing: billing(12, 445833, 445837),
@@ -101,7 +105,7 @@ const v2: BcVersion = {
   fileName: 'NCCM_business_case_v2.xlsx',
   comment: 'Post-clarification pricing; SOC scope enlarged',
   data: {
-    header: { tcv: 5350000, productTotal: 2759000, labourTotal: 1900000, marginPct: 16.6, currency: 'SGD', durationMonths: 36, projectStart: '2026-04-01' },
+    header: { tcv: 5350000, productTotal: 2759000, labourTotal: 1900000, marginPct: 16.6, currency: 'SGD', durationMonths: 36, projectStart: '2026-09-01' },
     products: products(),
     resources: resources([{ id: 'r5', dayRate: 0, total: 0 }]),
     billing: billing(11, 437727, 437730), // sums to 4,815,000 - short of CCB
@@ -117,9 +121,9 @@ const v3: BcVersion = {
   comment: 'Fixed billing plan and SOC day rate after Final Check',
   mspoDownloadedAt: tsAt(6, '11:35'),
   data: {
-    header: { tcv: 5350000, productTotal: 2759000, labourTotal: 1829880, marginPct: 9.4, currency: 'SGD', durationMonths: 36, projectStart: '2026-04-01' },
+    header: { tcv: 5350000, productTotal: 2759000, labourTotal: 2090685, marginPct: 9.4, currency: 'SGD', durationMonths: 36, projectStart: '2026-09-01' },
     products: products([{ id: 'p2', unitCost: 1500, total: 780000 }, { id: 'p5', ql: 3 }]),
-    resources: resources([{ id: 'r3', mandays: 760, total: 486400 }]),
+    resources: resources([{ id: 'r3', fyMandays: [259, 222, 166.5, 0], mandays: 647.5, total: 414400 }]),
     billing: billing(12, 445833, 445837),
   },
 };
@@ -145,7 +149,17 @@ const LC = 'Legal Conditions.pdf';
 
 /** Hand-written anchor clauses for t1, incl. the two reference-offset flags. */
 const t1BaseClauses: Clause[] = [
-  C('1.2', 'The Contract Period shall be thirty-six (36) months from the date of award.', 'Commercial', [], GR, 4, { reviewedBy: 'John Price' }),
+  C('1.2', 'The Contract Period shall be thirty-six (36) months from the date of award.', 'Commercial', [], GR, 4, {
+    reviewedBy: 'John Price',
+    compliance: 'Comply',
+    response: 'Accepted. 36-month term priced in business case v3.',
+    history: [
+      { ts: tsAt(18, '10:12'), by: 'John Price', field: 'Compliance', from: 'Unset', to: 'Clarify' },
+      { ts: tsAt(18, '10:13'), by: 'John Price', field: 'Remark', from: '', to: 'Confirm whether the term includes the 24-month extension option.' },
+      { ts: tsAt(12, '15:40'), by: 'Felicia Phan', field: 'Compliance', from: 'Clarify', to: 'Comply' },
+      { ts: tsAt(12, '15:41'), by: 'Felicia Phan', field: 'Remark', from: 'Confirm whether the term includes the 24-month extension option.', to: 'Accepted. 36-month term priced in business case v3.' },
+    ],
+  }),
   C('2.1', 'Tenderers shall submit all documents listed in Annex A in the formats prescribed therein.', 'Commercial', [], GR, 6, { reviewedBy: 'John Price' }),
   C('2.3(a)', 'A signed Non-Disclosure Agreement (Form NDA-2) shall accompany the tender submission.', 'Legal', ['confidentiality'], GR, 7),
   C('2.3(b)', 'All forms shall be signed by a person authorised to bind the Tenderer.', 'Legal', [], GR, 7),
@@ -156,9 +170,19 @@ const t1BaseClauses: Clause[] = [
   C('4.6', 'System availability shall be no less than 99.9% measured monthly, excluding agreed maintenance windows.', 'Legal', ['SLA'], TS, 18),
   C('5.1', 'Track record: at least two contact-centre deployments of 300+ seats completed in the last five years.', 'Commercial', [], GR, 10, { reviewedBy: 'John Price' }),
   C('5.4', 'Key personnel shall hold the certifications listed in clause 7.2.', 'HR', [], GR, 10, { refIssue: 'Clause 7.2 is "Payment Terms" in this document; the certification list is actually in clause 6.2. Cross-reference appears offset by one - verify.' }),
-  C('6.2', 'The project manager shall be PMP-certified with at least eight years of experience.', 'HR', [], GR, 11),
+  // wording matches the demo General Requirements PDF so the viewer can find and highlight it
+  C('6.2', 'The project manager shall hold PMP certification and have eight years experience.', 'HR', [], GR, 11),
   C('6.3', 'The lead security engineer shall hold CISSP or equivalent.', 'HR', [], GR, 11),
-  C('7.1', 'Payment shall be made within thirty (30) days of a correctly rendered invoice.', 'Finance', [], CC, 3, { reviewedBy: 'Ethan Lim' }),
+  C('7.1', 'Payment shall be made within thirty (30) days of a correctly rendered invoice.', 'Finance', [], CC, 3, {
+    reviewedBy: 'Ethan Lim',
+    compliance: 'Partially comply',
+    response: 'Request 21-day terms for hardware milestones.',
+    history: [
+      { ts: tsAt(15, '09:05'), by: 'Felicia Phan', field: 'Compliance', from: 'Unset', to: 'Comply' },
+      { ts: tsAt(9, '14:22'), by: 'John Price', field: 'Compliance', from: 'Comply', to: 'Partially comply' },
+      { ts: tsAt(9, '14:24'), by: 'John Price', field: 'Remark', from: '', to: 'Request 21-day terms for hardware milestones.' },
+    ],
+  }),
   C('7.4.2', 'An independent penetration test shall be conducted annually by an accredited provider.', 'Technical', [], TS, 22),
   C('8.1', 'The Contractor shall maintain Workmen\'s Compensation insurance for all deployed personnel.', 'Finance', ['workmen\'s compensation', 'insurance'], LC, 5),
   C('8.2', 'Public liability insurance of not less than S$5,000,000 per occurrence shall be maintained.', 'Finance', ['insurance'], LC, 5),
@@ -302,6 +326,7 @@ const t1: Tender = {
   createdAt: daysFromNow(-28),
   closingDate: daysFromNow(11),
   stepIdx: 3, // at DRB
+  mspoQuoteLine: 'QL-0045120',
   lastProcessedAt: tsAt(21, '14:12'),
   pack: [
     { id: 'd1', name: GR, role: 'General Requirements', pages: 18, status: 'Done', textExtracted: true },
@@ -1012,31 +1037,72 @@ export const TENDERS: Tender[] = [t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, 
 
 // ---- Template and boilerplate libraries -------------------------------------
 
+const LV = (version: string, updated: string, uploadedBy: string) => ({ version, updated, uploadedBy });
+
 export const TEMPLATES: TemplateDoc[] = [
-  { id: 'tpl-mha-ct', name: 'MHA compliance table (Annex A6)', agency: 'MHA', type: 'Compliance table', version: '3.1', updated: '2026-08-12', usedBy: ['t1'] },
-  { id: 'tpl-mha-cl', name: 'MHA cover letter', agency: 'MHA', type: 'Cover letter', version: '2.0', updated: '2026-06-03', usedBy: ['t1'] },
-  { id: 'tpl-atfm-ct', name: 'ATFM compliance matrix', agency: 'ATFM', type: 'Compliance table', version: '1.4', updated: '2026-07-21', usedBy: ['t2'] },
-  { id: 'tpl-generic-ct', name: 'Generic compliance table', agency: 'Generic', type: 'Compliance table', version: '1.2', updated: '2026-05-10', usedBy: ['t3', 't13'] },
-  { id: 'tpl-generic-cl', name: 'Generic cover letter', agency: 'Generic', type: 'Cover letter', version: '1.1', updated: '2026-04-28', usedBy: [] },
-  { id: 'tpl-generic-profile', name: 'Company profile pack', agency: 'Generic', type: 'Company profile', version: '4.2', updated: '2026-09-01', usedBy: ['t1', 't2'] },
-  { id: 'tpl-generic-personnel', name: 'Key personnel annex', agency: 'Generic', type: 'Form', version: '1.3', updated: '2026-03-15', usedBy: [] },
-  { id: 'tpl-mspo-milestone', name: 'MSPO product plan (milestone based)', agency: 'Generic', type: 'MSPO plan', version: '2026.2', updated: '2026-07-01', usedBy: ['t1'] },
-  { id: 'tpl-mspo-time', name: 'MSPO resource plan (time based)', agency: 'Generic', type: 'MSPO plan', version: '2026.2', updated: '2026-07-01', usedBy: ['t14'] },
-  { id: 'tpl-mspo-usage', name: 'MSPO plan (usage based)', agency: 'Generic', type: 'MSPO plan', version: '2026.1', updated: '2026-02-11', usedBy: [] },
+  { id: 'tpl-mha-ct', name: 'MHA compliance table (Annex A6)', agency: 'MHA', type: 'Compliance table', version: '3.1', updated: '2026-08-12', uploadedBy: 'John Price', usedBy: ['t1'],
+    history: [LV('3.0', '2026-03-02', 'John Price'), LV('2.4', '2025-09-18', 'Felicia Phan')] },
+  { id: 'tpl-mha-cl', name: 'MHA cover letter', agency: 'MHA', type: 'Cover letter', version: '2.0', updated: '2026-06-03', uploadedBy: 'Felicia Phan', usedBy: ['t1'],
+    history: [LV('1.3', '2025-11-20', 'Felicia Phan')] },
+  { id: 'tpl-atfm-ct', name: 'ATFM compliance matrix', agency: 'ATFM', type: 'Compliance table', version: '1.4', updated: '2026-07-21', uploadedBy: 'John Price', usedBy: ['t2'],
+    history: [LV('1.3', '2026-01-14', 'John Price')] },
+  { id: 'tpl-generic-ct', name: 'Generic compliance table', agency: 'Generic', type: 'Compliance table', version: '1.2', updated: '2026-05-10', uploadedBy: 'Dana Lim', usedBy: ['t3', 't13'] },
+  { id: 'tpl-generic-cl', name: 'Generic cover letter', agency: 'Generic', type: 'Cover letter', version: '1.1', updated: '2026-04-28', uploadedBy: 'Felicia Phan', usedBy: [] },
+  { id: 'tpl-generic-profile', name: 'Company profile pack', agency: 'Generic', type: 'Company profile', version: '4.2', updated: '2026-09-01', uploadedBy: 'Felicia Phan', usedBy: ['t1', 't2'],
+    history: [LV('4.1', '2026-04-07', 'Felicia Phan'), LV('4.0', '2025-12-01', 'Felicia Phan')] },
+  { id: 'tpl-generic-personnel', name: 'Key personnel annex', agency: 'Generic', type: 'Form', version: '1.3', updated: '2026-03-15', uploadedBy: 'John Price', usedBy: [] },
+  { id: 'tpl-generic-toc', name: 'Table of contents and document control page', agency: 'Generic', type: 'Document formatting', version: '2.0', updated: '2026-07-14', uploadedBy: 'Felicia Phan', usedBy: ['t1'],
+    history: [LV('1.2', '2025-10-03', 'Felicia Phan')] },
+  { id: 'tpl-generic-hf', name: 'Headers and footers (tender reference, version, page numbers)', agency: 'Generic', type: 'Document formatting', version: '1.4', updated: '2026-06-22', uploadedBy: 'John Price', usedBy: ['t1', 't2'],
+    history: [LV('1.3', '2026-01-19', 'John Price')] },
 ];
 
 export const BOILERPLATE: Boilerplate[] = [
-  { id: 'bp1', name: 'Company background (long form)', type: 'Company background', version: '5.0', owner: 'Felicia Phan' },
-  { id: 'bp2', name: 'Contact-centre track record pack', type: 'Company background', version: '2.3', owner: 'Felicia Phan' },
-  { id: 'bp3', name: 'ISO 27001 certificate', type: 'Certification', version: '2026', owner: 'Kelyn Wong', expires: '2027-03-31' },
-  { id: 'bp4', name: 'bizSAFE Level 3 certificate', type: 'Certification', version: '2025', owner: 'Kelyn Wong', expires: daysFromNow(-13) }, // expired
-  { id: 'bp5', name: 'ISO 9001 certificate', type: 'Certification', version: '2026', owner: 'Kelyn Wong', expires: daysFromNow(26) }, // expiring soon
-  { id: 'cv1', name: 'CV - Tan Wei Ming (Project Manager)', type: 'CV', version: '1.8', owner: 'Priya Nair', role: 'Project Manager', years: 11 },
-  { id: 'cv2', name: 'CV - Sarah Koh (Solution Architect)', type: 'CV', version: '2.1', owner: 'Priya Nair', role: 'Solution Architect', years: 12 },
-  { id: 'cv3', name: 'CV - Daniel Ong (Analyst Programmer)', type: 'CV', version: '1.2', owner: 'Priya Nair', role: 'Analyst Programmer', years: 6 },
-  { id: 'cv4', name: 'CV - Mei Lin Teo (Security Lead, CISSP)', type: 'CV', version: '1.5', owner: 'Priya Nair', role: 'Security Engineer', years: 9 },
-  { id: 'cv5', name: 'CV - Ravi Kumar (Service Manager, ITIL 4)', type: 'CV', version: '1.9', owner: 'Priya Nair', role: 'Service Manager', years: 8 },
-  { id: 'cv6', name: 'CV - Grace Lim (Test Lead)', type: 'CV', version: '1.1', owner: 'Priya Nair', role: 'Test Lead', years: 7 },
+  { id: 'bp1', name: 'Company background (long form)', type: 'Company background', version: '5.0', owner: 'Felicia Phan', uploadedBy: 'Felicia Phan', updated: '2026-08-20',
+    tags: ['Company profile', 'History', 'Capabilities'],
+    history: [LV('4.2', '2026-02-11', 'Felicia Phan'), LV('4.1', '2025-08-30', 'Felicia Phan')] },
+  { id: 'bp2', name: 'Contact-centre track record pack', type: 'Company background', version: '2.3', owner: 'Felicia Phan', uploadedBy: 'Felicia Phan', updated: '2026-06-17',
+    tags: ['Track record', 'Contact centre'],
+    history: [LV('2.2', '2026-01-09', 'Felicia Phan')] },
+  { id: 'bp6', name: 'Corporate registration details (UEN, registered address, authorised representatives, GST number)', type: 'Company background', version: '3.1', owner: 'Felicia Phan', uploadedBy: 'Felicia Phan', updated: '2026-09-02',
+    tags: ['Corporate', 'UEN', 'GST', 'Legal entity'],
+    history: [LV('3.0', '2026-01-12', 'Felicia Phan')] },
+  { id: 'bp7', name: 'Organisation chart and governance', type: 'Company background', version: '2.2', owner: 'Felicia Phan', uploadedBy: 'Felicia Phan', updated: '2026-07-30',
+    tags: ['Organisation', 'Governance', 'Escalation'] },
+  { id: 'bp8', name: 'Past project references and case studies', type: 'Company background', version: '4.0', owner: 'John Price', uploadedBy: 'John Price', updated: '2026-08-11',
+    tags: ['Track record', 'Case study', 'Public sector'],
+    history: [LV('3.4', '2026-03-05', 'John Price'), LV('3.3', '2025-11-17', 'John Price')] },
+  { id: 'bp9', name: 'Customer testimonials and reference letters', type: 'Company background', version: '1.6', owner: 'John Price', uploadedBy: 'John Price', updated: '2026-05-26',
+    tags: ['References', 'Testimonials'] },
+  { id: 'bp10', name: 'Warranty and maintenance terms', type: 'Company background', version: '2.0', owner: 'Felicia Phan', uploadedBy: 'Felicia Phan', updated: '2026-04-08',
+    tags: ['Commercial', 'Warranty', 'Maintenance', 'SLA'],
+    history: [LV('1.5', '2025-09-22', 'Felicia Phan')] },
+  { id: 'bp11', name: 'Business continuity, quality and security policy summaries', type: 'Company background', version: '3.0', owner: 'Kelyn Wong', uploadedBy: 'Kelyn Wong', updated: '2026-06-30',
+    tags: ['Policy', 'BCP', 'Quality', 'Security'] },
+  { id: 'bp12', name: 'PDPA and data protection statement', type: 'Company background', version: '2.1', owner: 'Kelyn Wong', uploadedBy: 'Kelyn Wong', updated: '2026-03-18',
+    tags: ['PDPA', 'Data protection', 'Privacy', 'Legal'],
+    history: [LV('2.0', '2025-12-02', 'Kelyn Wong')] },
+  { id: 'bp3', name: 'ISO 27001 certificate', type: 'Certification', version: '2026', owner: 'Kelyn Wong', uploadedBy: 'Kelyn Wong', updated: '2026-04-02', expires: '2027-03-31',
+    issuer: 'TUV SUD PSB', certNumber: 'ISMS-27001-SG-0421', issued: '2024-04-01',
+    history: [LV('2025', '2025-04-01', 'Kelyn Wong')] },
+  { id: 'bp4', name: 'bizSAFE Level 3 certificate', type: 'Certification', version: '2025', owner: 'Kelyn Wong', uploadedBy: 'Kelyn Wong', updated: '2025-10-01', expires: daysFromNow(-13), // expired
+    issuer: 'Workplace Safety and Health Council', certNumber: 'BZS-L3-208817', issued: '2023-10-06' },
+  { id: 'bp5', name: 'ISO 9001 certificate', type: 'Certification', version: '2026', owner: 'Kelyn Wong', uploadedBy: 'Kelyn Wong', updated: '2026-01-15', expires: daysFromNow(26), // expiring soon
+    issuer: 'SGS International Certification Services', certNumber: 'SG23/71402', issued: '2023-11-14' },
+  { id: 'bp13', name: "Workmen's compensation insurance", type: 'Certification', version: '2026', owner: 'Kelyn Wong', uploadedBy: 'Kelyn Wong', updated: '2026-07-01', expires: '2027-06-30',
+    issuer: 'Great Eastern General Insurance', certNumber: 'WICA-0098-55120', issued: '2026-07-01',
+    history: [LV('2025', '2025-07-01', 'Kelyn Wong')] },
+  { id: 'bp14', name: 'Business registration and tax registration documents (ACRA business profile, GST registration)', type: 'Certification', version: '2026.3', owner: 'Felicia Phan', uploadedBy: 'Felicia Phan', updated: '2026-09-15', expires: '2027-09-14',
+    issuer: 'ACRA and IRAS', certNumber: 'UEN 199804567K / GST M2-0123456-7', issued: '2026-09-15',
+    history: [LV('2026.2', '2026-06-10', 'Felicia Phan')] },
+  { id: 'bp15', name: 'Vendor partnerships and partner tiers', type: 'Certification', version: '2026', owner: 'John Price', uploadedBy: 'John Price', updated: '2026-02-20', expires: '2027-01-31',
+    issuer: 'Microsoft, Cisco, Genesys', certNumber: 'Microsoft Solutions Partner 4471902 / Cisco Gold 11873 / Genesys Gold', issued: '2026-02-01' },
+  { id: 'cv1', name: 'CV - Tan Wei Ming (Project Manager)', type: 'CV', version: '1.8', owner: 'Priya Nair', uploadedBy: 'Priya Nair', updated: '2026-05-04', role: 'Project Manager', years: 11 },
+  { id: 'cv2', name: 'CV - Sarah Koh (Solution Architect)', type: 'CV', version: '2.1', owner: 'Priya Nair', uploadedBy: 'Priya Nair', updated: '2026-05-04', role: 'Solution Architect', years: 12 },
+  { id: 'cv3', name: 'CV - Daniel Ong (Analyst Programmer)', type: 'CV', version: '1.2', owner: 'Priya Nair', uploadedBy: 'Priya Nair', updated: '2026-05-04', role: 'Analyst Programmer', years: 6 },
+  { id: 'cv4', name: 'CV - Mei Lin Teo (Security Lead, CISSP)', type: 'CV', version: '1.5', owner: 'Priya Nair', uploadedBy: 'Priya Nair', updated: '2026-05-04', role: 'Security Engineer', years: 9 },
+  { id: 'cv5', name: 'CV - Ravi Kumar (Service Manager, ITIL 4)', type: 'CV', version: '1.9', owner: 'Priya Nair', uploadedBy: 'Priya Nair', updated: '2026-05-04', role: 'Service Manager', years: 8 },
+  { id: 'cv6', name: 'CV - Grace Lim (Test Lead)', type: 'CV', version: '1.1', owner: 'Priya Nair', uploadedBy: 'Priya Nair', updated: '2026-05-04', role: 'Test Lead', years: 7 },
 ];
 
 // ---- Repository ---------------------------------------------------------------
@@ -1161,3 +1227,72 @@ export const BACKUP = {
   lastBackup: tsAt(0, '02:00'),
   lastRestoreTest: { date: daysFromNow(-31), by: 'Kelyn Wong', result: 'Passed - 25 sampled files restored and checksum-verified' },
 };
+
+// ---- Audit log seed ---------------------------------------------------------
+// Derived from the records above so the log agrees with every list and detail
+// page: tender creation, uploads, processing runs, business case versions,
+// MSPO generation, template uploads and archive/restore events.
+
+const ROLE_BY_NAME: Record<string, string> = {
+  ...Object.fromEntries(USERS.map((u) => [u.name, u.roleLabel])),
+  'Dana Lim': 'Bidding Manager',
+  'Marcus Chen': 'Bidding Manager',
+  'Kelyn Wong': 'Administrator',
+};
+const SYSTEM = 'TendrAI (system)';
+
+function buildSeedAudit(): AuditEntry[] {
+  const out: Omit<AuditEntry, 'id'>[] = [];
+  const add = (ts: string, user: string, action: string, detail: string, tender?: string, section?: string) =>
+    out.push({ ts: ts.length === 10 ? `${ts}T09:00:00+08:00` : ts, user, role: user === SYSTEM ? 'Automated' : (ROLE_BY_NAME[user] ?? 'User'), action, detail, tender, section });
+  const at = (iso: string, mins: number) => new Date(new Date(iso.length === 10 ? `${iso}T09:00:00+08:00` : iso).getTime() + mins * 60000).toISOString();
+
+  for (const t of TENDERS) {
+    const ref = t.ref || t.name;
+    add(t.createdAt, t.owner, 'Tender created', `${t.name} (${t.type})`, ref, 'Tenders');
+    if (t.pack.length) add(at(t.createdAt, 25), t.owner, 'Documents uploaded', `${t.pack.length} document${t.pack.length > 1 ? 's' : ''} added to the tender pack`, ref, 'Documents');
+    if (t.lastProcessedAt) {
+      add(at(t.lastProcessedAt, -18), t.owner, 'Processing started', 'Processing job queued for the tender pack', ref, 'Documents');
+      const failed = t.pack.filter((d) => d.status === 'Failed').length;
+      add(t.lastProcessedAt, SYSTEM, 'Processing completed', `${t.clauses.length} clauses, ${t.checklist.length} submission documents, ${t.quals.length} qualification requirements extracted${failed ? `; ${failed} document${failed > 1 ? 's' : ''} failed` : ''}`, ref, 'Documents');
+    }
+    if (t.processFailed) add(at(t.createdAt, 60 * 24 * 3), SYSTEM, 'Processing failed', 'Analysis service unavailable - no results produced', ref, 'Documents');
+    if (t.templateSearch?.ranAt) add(t.templateSearch.ranAt, t.owner, 'Templates matched', `${t.templateSearch.matches.length} suitable template(s) found`, ref, 'Submission');
+    for (const v of t.bcVersions) {
+      add(v.uploadedAt, v.uploadedBy, 'Business case uploaded', `v${v.v} - ${v.fileName}${v.comment ? ` ("${v.comment}")` : ''}`, ref, 'Business case');
+      if (v.mspoDownloadedAt) add(v.mspoDownloadedAt, v.uploadedBy, 'MSPO templates downloaded', `Product and resource plans generated from v${v.v}`, ref, 'MSPO templates');
+    }
+    for (const c of t.clauses.filter((x) => x.reviewedBy).slice(0, 2)) {
+      add(at(t.lastProcessedAt ?? t.createdAt, 60 * 26), c.reviewedBy!, 'Clause updated', `Clause ${c.number}: category confirmed as ${c.category}`, ref, 'Clauses');
+    }
+    // the compliance / remark changes shown in each clause's change history
+    for (const c of t.clauses) {
+      for (const h of c.history ?? []) {
+        add(h.ts, h.by, 'Clause updated', `Clause ${c.number}: ${h.field === 'Compliance' ? `compliance ${h.from} -> ${h.to}` : `remark "${h.to}"`}`, ref, 'Clauses');
+      }
+    }
+    if (t.status === 'Won' || t.status === 'Closed') add(at(t.closingDate || t.createdAt, 60 * 24 * 14), t.owner, 'Status changed', `Status set to ${t.status} - ${t.statusReason}`, ref, 'Tenders');
+  }
+  for (const tpl of TEMPLATES) {
+    for (const h of [...(tpl.history ?? [])].reverse()) add(h.updated, h.uploadedBy, 'Template uploaded', `${tpl.name} v${h.version}`, undefined, 'Templates');
+    add(tpl.updated, tpl.uploadedBy, tpl.history?.length ? 'Template replaced' : 'Template uploaded', `${tpl.name} v${tpl.version}`, undefined, 'Templates');
+  }
+  for (const b of BOILERPLATE.filter((x) => x.type !== 'CV')) {
+    add(b.updated, b.uploadedBy, b.type === 'Certification' ? 'Certification uploaded' : 'Boilerplate uploaded', `${b.name} v${b.version}`, undefined, 'Templates');
+  }
+  for (const r of REPOSITORY) {
+    if (r.archived) add(r.archived.at, 'Felicia Phan', 'Record archived', `${r.name} - compressed ${r.archived.sizeFrom} to ${r.archived.sizeTo}`, undefined, 'Historical data');
+    if (r.restore) add(r.restore.requestedAt, 'Felicia Phan', 'Restore requested', r.name, undefined, 'Historical data');
+    if (r.restore?.state === 'available') add(at(r.restore.requestedAt, 140), SYSTEM, 'Restore completed', `${r.name} - files available`, undefined, 'Historical data');
+  }
+  // one timestamp format (UTC ISO) so string sorting is chronological, and
+  // nothing derived may land in the future
+  const now = Date.now();
+  return out
+    .map((e) => ({ ...e, ts: new Date(e.ts).toISOString() }))
+    .filter((e) => new Date(e.ts).getTime() <= now)
+    .sort((a, b) => a.ts.localeCompare(b.ts))
+    .map((e, i) => ({ ...e, id: `seed-${i + 1}` }));
+}
+
+export const AUDIT: AuditEntry[] = buildSeedAudit();

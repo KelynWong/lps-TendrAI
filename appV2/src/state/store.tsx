@@ -4,21 +4,27 @@
 import { createContext, useContext, useMemo, useReducer } from 'react';
 import type { ReactNode } from 'react';
 import type {
+  AuditEntry,
   BcVersion,
   Boilerplate,
   ChecklistItem,
   Clause,
+  ClauseChange,
   GenDoc,
   PackDoc,
   PackDocRole,
   RepoRecord,
   TemplateDoc,
   TemplateSearch,
+  Qualification,
   Tender,
 } from '../types';
+import { PROCESS_STAGES } from '../types';
 import type { Role, UserInfo } from '../config';
-import { BACKUP, BOILERPLATE, REPOSITORY, TEMPLATES, TENDERS } from '../data/mock';
+import { AUDIT, BACKUP, BOILERPLATE, REPOSITORY, TEMPLATES, TENDERS } from '../data/mock';
 import { buildDemoExtraction } from '../data/extraction';
+import { DEFAULT_RULES, type RuleDef } from '../rules/finalChecks';
+import { DEFAULT_MSPO_MAPPING, type FieldMapEntry, type MspoDefaults, type MspoPlan } from '../mspo/mapping';
 
 export interface AppState {
   user: UserInfo | null; // null = not signed in
@@ -29,9 +35,54 @@ export interface AppState {
   boilerplate: Boilerplate[];
   repository: RepoRecord[];
   backup: typeof BACKUP & { lastRestoreDemo?: string };
+  audit: AuditEntry[];
+  /** Final Check rules applied to every business case upload */
+  rules: RuleDef[];
+  /** company-wide MSPO mapping defaults (tenders may adjust their copy) */
+  mspoDefaults: MspoDefaults;
+  /** filters to apply when the Audit log opens (e.g. "View history" on a tab) */
+  auditPrefill?: { tender?: string; section?: string };
+  /** page the shell should switch to (n changes on every request) */
+  nav?: { page: string; sub?: string; n: number };
+  /** where "Back to tender" returns: the tender and its inner tab */
+  returnTo?: ReturnTarget;
+  /** inner tender tab to open once (set by "Back to tender") */
+  packTabRequest?: string;
 }
 
-type Action =
+export interface ReturnTarget {
+  tenderId: string;
+  /** inner tab key: upload | checklist | quals | clauses */
+  packTab: string;
+  label: string;
+}
+
+/** Client-side events with no state change of their own (downloads, exports)
+ *  are recorded through this action so the audit log covers them too. */
+export interface LogEvent {
+  action: string;
+  detail: string;
+  tenderId?: string;
+  section?: string;
+}
+
+export type Action =
+  | { type: 'log'; event: LogEvent }
+  | { type: 'upsert-rule'; rule: RuleDef }
+  | { type: 'delete-rule'; id: string }
+  | { type: 'set-mspo-defaults'; plan: MspoPlan; entries: FieldMapEntry[] }
+  | { type: 'set-mspo-rows'; tenderId: string; plan: MspoPlan; rows?: number }
+  | { type: 'set-mspo-meta'; tenderId: string; quoteLine?: string; fyCount?: number; daysPerMonth?: number }
+  | { type: 'open-audit'; tender?: string; section?: string; returnTo?: ReturnTarget }
+  | { type: 'go-to'; page: string; sub?: string; returnTo?: ReturnTarget }
+  | { type: 'back-to-tender' }
+  | { type: 'clear-return' }
+  | { type: 'clear-pack-tab-request' }
+  | { type: 'clear-audit-prefill' }
+  | { type: 'set-mspo-details'; tenderId: string; changes: string[]; quoteLine: string; fyCount: number; daysPerMonth: number; rows: Record<MspoPlan, number> }
+  | { type: 'reset-mspo-mapping'; tenderId: string; key?: string }
+  | { type: 'upload-template'; tpl: TemplateDoc; replaceId?: string }
+  | { type: 'upload-boilerplate'; item: Boilerplate; replaceId?: string }
   | { type: 'login'; user: UserInfo }
   | { type: 'logout' }
   | { type: 'set-role'; role: Role }
@@ -59,6 +110,9 @@ type Action =
   | { type: 'set-tender-status'; tenderId: string; status: Tender['status']; statusReason: Tender['statusReason'] }
   | { type: 'patch-checklist'; tenderId: string; itemId: string; patch: Partial<ChecklistItem> }
   | { type: 'patch-clause'; tenderId: string; clauseId: string; patch: Partial<Clause> }
+  /** several clause edits saved together (one audit entry) */
+  | { type: 'save-clauses'; tenderId: string; patches: { clauseId: string; patch: Partial<Clause> }[] }
+  | { type: 'patch-qual'; tenderId: string; qualId: string; patch: Partial<Qualification> }
   | { type: 'upload-bc'; tenderId: string; version: BcVersion }
   | { type: 'set-drb'; tenderId: string; outcome?: Tender['drbOutcome']; notes?: string }
   | { type: 'patch-gendoc'; tenderId: string; docId: string; patch: Partial<GenDoc> }
@@ -103,6 +157,31 @@ function reducer(state: AppState, a: Action): AppState {
       };
     case 'close-tender':
       return { ...state, activeTenderId: null };
+    case 'open-audit':
+      return {
+        ...state,
+        activeTenderId: null,
+        auditPrefill: { tender: a.tender, section: a.section },
+        nav: { page: 'audit', n: (state.nav?.n ?? 0) + 1 },
+        returnTo: a.returnTo,
+      };
+    case 'go-to':
+      return { ...state, activeTenderId: null, nav: { page: a.page, sub: a.sub, n: (state.nav?.n ?? 0) + 1 }, returnTo: a.returnTo };
+    case 'back-to-tender':
+      if (!state.returnTo) return state;
+      return {
+        ...state,
+        activeTenderId: state.returnTo.tenderId,
+        packTabRequest: state.returnTo.packTab,
+        nav: { page: 'tenders', n: (state.nav?.n ?? 0) + 1 },
+        returnTo: undefined,
+      };
+    case 'clear-return':
+      return state.returnTo ? { ...state, returnTo: undefined } : state;
+    case 'clear-pack-tab-request':
+      return { ...state, packTabRequest: undefined };
+    case 'clear-audit-prefill':
+      return { ...state, auditPrefill: undefined };
     case 'set-step':
       return patchTender(state, a.tenderId, (t) => ({ ...t, stepIdx: Math.max(t.stepIdx, a.idx) }));
     case 'correct-doc-role':
@@ -249,9 +328,31 @@ function reducer(state: AppState, a: Action): AppState {
         checklist: t.checklist.map((k) => (k.id === a.itemId ? { ...k, ...a.patch } : k)),
       }));
     case 'patch-clause':
+    case 'save-clauses': {
+      const patches = a.type === 'patch-clause' ? [{ clauseId: a.clauseId, patch: a.patch }] : a.patches;
+      const now = new Date().toISOString();
+      const by = state.user?.name ?? 'Unknown';
       return patchTender(state, a.tenderId, (t) => ({
         ...t,
-        clauses: t.clauses.map((c) => (c.id === a.clauseId ? { ...c, ...a.patch } : c)),
+        clauses: t.clauses.map((c) => {
+          const p = patches.find((x) => x.clauseId === c.id)?.patch;
+          if (!p) return c;
+          // keep earlier compliance values and remarks so changes can be reviewed
+          const changes: ClauseChange[] = [];
+          if (p.compliance !== undefined && p.compliance !== c.compliance) {
+            changes.push({ ts: now, by, field: 'Compliance', from: c.compliance, to: p.compliance });
+          }
+          if (p.response !== undefined && p.response !== c.response) {
+            changes.push({ ts: now, by, field: 'Remark', from: c.response, to: p.response });
+          }
+          return { ...c, ...p, history: changes.length ? [...(c.history ?? []), ...changes] : c.history };
+        }),
+      }));
+    }
+    case 'patch-qual':
+      return patchTender(state, a.tenderId, (t) => ({
+        ...t,
+        quals: t.quals.map((q) => (q.id === a.qualId ? { ...q, ...a.patch } : q)),
       }));
     case 'upload-bc':
       return patchTender(state, a.tenderId, (t) => ({
@@ -274,6 +375,67 @@ function reducer(state: AppState, a: Action): AppState {
         genDocs: t.genDocs.map((g) => (g.id === a.docId ? { ...g, ...a.patch } : g)),
         stepIdx: Math.max(t.stepIdx, 4),
       }));
+    case 'log':
+      return state; // the audit wrapper records it
+    case 'upsert-rule':
+      return {
+        ...state,
+        rules: state.rules.some((r) => r.id === a.rule.id)
+          ? state.rules.map((r) => (r.id === a.rule.id ? a.rule : r))
+          : [...state.rules, a.rule],
+      };
+    case 'delete-rule':
+      return { ...state, rules: state.rules.filter((r) => r.id !== a.id) };
+    case 'set-mspo-defaults':
+      return { ...state, mspoDefaults: { ...state.mspoDefaults, [a.plan]: a.entries } };
+    case 'set-mspo-rows':
+      return patchTender(state, a.tenderId, (t) => ({ ...t, mspoRows: { ...t.mspoRows, [a.plan]: a.rows } }));
+    case 'set-mspo-details':
+      return patchTender(state, a.tenderId, (t) => ({
+        ...t,
+        mspoQuoteLine: a.quoteLine || undefined,
+        mspoFyCount: a.fyCount,
+        mspoDaysPerMonth: a.daysPerMonth,
+        mspoRows: { ...a.rows },
+      }));
+    case 'set-mspo-meta':
+      return patchTender(state, a.tenderId, (t) => ({
+        ...t,
+        ...(a.quoteLine !== undefined ? { mspoQuoteLine: a.quoteLine || undefined } : {}),
+        ...('fyCount' in a ? { mspoFyCount: a.fyCount } : {}),
+        ...('daysPerMonth' in a ? { mspoDaysPerMonth: a.daysPerMonth } : {}),
+      }));
+    case 'reset-mspo-mapping':
+      return patchTender(state, a.tenderId, (t) => {
+        if (!a.key) return { ...t, mspoMapping: undefined, mspoRows: undefined, mspoFyCount: undefined, mspoDaysPerMonth: undefined };
+        const next = { ...t.mspoMapping };
+        delete next[a.key];
+        return { ...t, mspoMapping: next };
+      });
+    case 'upload-template': {
+      const old = a.replaceId ? state.templates.find((x) => x.id === a.replaceId) : undefined;
+      if (!old) return { ...state, templates: [a.tpl, ...state.templates] };
+      // replacing keeps the record (and its usage) and archives the old version
+      const next: TemplateDoc = {
+        ...old,
+        ...a.tpl,
+        id: old.id,
+        usedBy: old.usedBy,
+        history: [{ version: old.version, updated: old.updated, uploadedBy: old.uploadedBy }, ...(old.history ?? [])],
+      };
+      return { ...state, templates: state.templates.map((x) => (x.id === old.id ? next : x)) };
+    }
+    case 'upload-boilerplate': {
+      const old = a.replaceId ? state.boilerplate.find((x) => x.id === a.replaceId) : undefined;
+      if (!old) return { ...state, boilerplate: [a.item, ...state.boilerplate] };
+      const next: Boilerplate = {
+        ...old,
+        ...a.item,
+        id: old.id,
+        history: [{ version: old.version, updated: old.updated, uploadedBy: old.uploadedBy }, ...(old.history ?? [])],
+      };
+      return { ...state, boilerplate: state.boilerplate.map((x) => (x.id === old.id ? next : x)) };
+    }
     case 'add-template':
       return { ...state, templates: [a.tpl, ...state.templates] };
     case 'update-template':
@@ -318,6 +480,177 @@ function reducer(state: AppState, a: Action): AppState {
   }
 }
 
+// ---- Audit log ----------------------------------------------------------------
+// Every dispatched action is described here, in one place, so nothing a user
+// does can bypass the log. Navigation-only actions return null.
+
+const SYSTEM_ACTOR = { name: 'TendrAI (system)', role: 'Automated' };
+let auditSeq = 0;
+
+type Described = Omit<AuditEntry, 'id' | 'ts' | 'user' | 'role'> & { system?: boolean };
+
+function describe(prev: AppState, a: Action, next: AppState): Described | null {
+  const tenderOf = (id?: string) => (id ? prev.tenders.find((t) => t.id === id) ?? next.tenders.find((t) => t.id === id) : undefined);
+  const refOf = (id?: string) => {
+    const t = tenderOf(id);
+    return t ? (t.ref || t.name) : undefined;
+  };
+  const docName = (tid: string, did: string) => tenderOf(tid)?.pack.find((d) => d.id === did)?.name ?? 'document';
+  switch (a.type) {
+    case 'open-audit':
+    case 'clear-audit-prefill':
+    case 'go-to':
+    case 'back-to-tender':
+    case 'clear-return':
+    case 'clear-pack-tab-request':
+      return null;
+    case 'log':
+      return { action: a.event.action, detail: a.event.detail, tender: refOf(a.event.tenderId), section: a.event.section };
+    case 'login':
+      return { action: 'Signed in', detail: a.user.email };
+    case 'upsert-rule': {
+      const old = prev.rules.find((r) => r.id === a.rule.id);
+      if (old && old.enabled !== a.rule.enabled && JSON.stringify({ ...old, enabled: a.rule.enabled }) === JSON.stringify(a.rule)) {
+        return { action: a.rule.enabled ? 'Rule enabled' : 'Rule disabled', detail: a.rule.name, section: 'Business case management' };
+      }
+      return { action: old ? 'Rule edited' : 'Rule added', detail: `${a.rule.name} (${a.rule.severity})`, section: 'Business case management' };
+    }
+    case 'delete-rule':
+      return { action: 'Rule deleted', detail: prev.rules.find((r) => r.id === a.id)?.name ?? '', section: 'Business case management' };
+    case 'set-mspo-defaults':
+      return { action: 'MSPO default mapping changed', detail: `${a.plan} plan`, section: 'Business case management' };
+    case 'set-mspo-rows':
+      return { action: 'MSPO row count changed', detail: `${a.plan} plan: ${a.rows ?? 'default'} rows`, tender: refOf(a.tenderId), section: 'MSPO templates' };
+    case 'set-mspo-details':
+      return { action: 'MSPO details saved', detail: a.changes.join('; '), tender: refOf(a.tenderId), section: 'MSPO templates' };
+    case 'set-mspo-meta':
+      return a.quoteLine !== undefined
+        ? { action: 'MSPO quote line set', detail: a.quoteLine || '(cleared)', tender: refOf(a.tenderId), section: 'MSPO templates' }
+        : 'daysPerMonth' in a
+          ? { action: 'MSPO man-days per month changed', detail: `${a.daysPerMonth ?? 'default'} man-days per month`, tender: refOf(a.tenderId), section: 'MSPO templates' }
+          : { action: 'MSPO fiscal years changed', detail: `${a.fyCount ?? 'default'} fiscal year(s)`, tender: refOf(a.tenderId), section: 'MSPO templates' };
+    case 'reset-mspo-mapping':
+      return { action: 'MSPO mapping reset to default', detail: a.key ? a.key.replace(':', ' plan: ') : 'All plans', tender: refOf(a.tenderId), section: 'MSPO templates' };
+    case 'logout':
+      return { action: 'Signed out', detail: prev.user?.email ?? '' };
+    case 'create-tender':
+      return { action: 'Tender created', detail: `${a.tender.name} (${a.tender.type}, ${a.tender.agency})`, tender: a.tender.ref || a.tender.name, section: 'Tenders' };
+    case 'update-tender': {
+      const t = tenderOf(a.tenderId);
+      const changes = Object.entries(a.patch)
+        .filter(([k, v]) => t && (t as unknown as Record<string, unknown>)[k] !== v && !(v === undefined && !(t as unknown as Record<string, unknown>)[k]))
+        .map(([k, v]) => `${k}: ${String((t as unknown as Record<string, unknown>)[k] ?? '-') || '-'} -> ${String(v ?? '-') || '-'}`);
+      return changes.length ? { action: 'Tender details edited', detail: changes.join('; '), tender: refOf(a.tenderId), section: 'Tenders' } : null;
+    }
+    case 'delete-tender':
+      return { action: 'Tender deleted', detail: tenderOf(a.tenderId)?.name ?? '', tender: refOf(a.tenderId), section: 'Tenders' };
+    case 'set-tender-status': {
+      const t = tenderOf(a.tenderId);
+      return { action: 'Status changed', detail: `${t?.statusReason ?? '-'} -> ${a.statusReason}`, tender: refOf(a.tenderId), section: 'Tenders' };
+    }
+    case 'add-pack-docs':
+      return { action: 'Document uploaded', detail: a.docs.map((d) => d.name).join(', '), tender: refOf(a.tenderId), section: 'Documents' };
+    case 'remove-pack-doc':
+      return { action: 'Document deleted', detail: docName(a.tenderId, a.docId), tender: refOf(a.tenderId), section: 'Documents' };
+    case 'move-pack-doc':
+      return { action: 'Document reordered', detail: `${docName(a.tenderId, a.docId)} moved ${a.direction}`, tender: refOf(a.tenderId), section: 'Documents' };
+    case 'correct-doc-role':
+      return { action: 'Document role changed', detail: `${docName(a.tenderId, a.docId)} -> ${a.role}`, tender: refOf(a.tenderId), section: 'Documents' };
+    case 'start-processing': {
+      const t = tenderOf(a.tenderId);
+      return { action: t?.lastProcessedAt ? 'Reprocessing started' : 'Processing started', detail: `${t?.pack.length ?? 0} documents, ${PROCESS_STAGES.length} stages`, tender: refOf(a.tenderId), section: 'Documents' };
+    }
+    case 'finish-processing': {
+      const t = next.tenders.find((x) => x.id === a.tenderId);
+      if (!tenderOf(a.tenderId)?.job) return null;
+      return { system: true, action: 'Processing completed', detail: `${t?.clauses.length ?? 0} clauses, ${t?.checklist.length ?? 0} submission documents, ${t?.quals.length ?? 0} qualification requirements`, tender: refOf(a.tenderId), section: 'Documents' };
+    }
+    case 'retry-doc':
+      return { action: 'Document retried', detail: docName(a.tenderId, a.docId), tender: refOf(a.tenderId), section: 'Documents' };
+    case 'template-search-done':
+      return { action: 'Templates matched', detail: `${a.search.matches.length} suitable template(s) found`, tender: refOf(a.tenderId), section: 'Submission' };
+    case 'patch-checklist': {
+      const k = tenderOf(a.tenderId)?.checklist.find((x) => x.id === a.itemId);
+      if (!k) return null;
+      if ('draft' in a.patch && a.patch.draft && !k.draft) {
+        return { action: 'First draft generated', detail: k.item, tender: refOf(a.tenderId), section: 'Submission' };
+      }
+      if ('templateId' in a.patch && a.patch.templateId !== k.templateId) {
+        const name = prev.templates.find((x) => x.id === a.patch.templateId)?.name ?? 'None';
+        return { action: 'Template selected', detail: `${k.item} -> ${name}${'draft' in a.patch && !a.patch.draft && k.draft ? ' (draft discarded)' : ''}`, tender: refOf(a.tenderId), section: 'Submission' };
+      }
+      return null;
+    }
+    case 'patch-qual': {
+      const q = tenderOf(a.tenderId)?.quals.find((x) => x.id === a.qualId);
+      if (!q || !('evidence' in a.patch) || a.patch.evidence === q.evidence) return null;
+      const cert = prev.boilerplate.find((b) => b.id === a.patch.evidence);
+      return { action: 'Certificate linked', detail: `${q.requirement} -> ${cert ? `${cert.name} v${cert.version}` : 'None'}`, tender: refOf(a.tenderId), section: 'Qualification' };
+    }
+    case 'patch-clause':
+    case 'save-clauses': {
+      const patches = a.type === 'patch-clause' ? [{ clauseId: a.clauseId, patch: a.patch }] : a.patches;
+      const lines = patches.flatMap(({ clauseId, patch }) => {
+        const c = tenderOf(a.tenderId)?.clauses.find((x) => x.id === clauseId);
+        if (!c) return [];
+        const parts: string[] = [];
+        if (patch.compliance !== undefined && patch.compliance !== c.compliance) parts.push(`compliance ${c.compliance} -> ${patch.compliance}`);
+        if (patch.category !== undefined && patch.category !== c.category) parts.push(`category ${c.category} -> ${patch.category}`);
+        if (patch.response !== undefined && patch.response !== c.response) parts.push(`remark "${patch.response}"`);
+        return parts.length ? [`Clause ${c.number}: ${parts.join(', ')}`] : [];
+      });
+      if (!lines.length) return null;
+      return {
+        action: lines.length > 1 ? 'Clauses updated' : 'Clause updated',
+        detail: lines.length > 1 ? `${lines.length} clauses - ${lines.join('; ')}` : lines[0],
+        tender: refOf(a.tenderId),
+        section: 'Clauses',
+      };
+    }
+    case 'upload-bc':
+      return { action: 'Business case uploaded', detail: `v${a.version.v} - ${a.version.fileName}${a.version.layoutUnrecognised ? ' (layout not recognised)' : ''}`, tender: refOf(a.tenderId), section: 'Business case' };
+    case 'delete-bc-version':
+      return { action: 'Business case version deleted', detail: `v${a.v}`, tender: refOf(a.tenderId), section: 'Business case' };
+    case 'set-mspo-mapping':
+      return { action: 'MSPO mapping changed', detail: `${a.key.replace(':', ' plan: ')} <- ${a.tab} ${a.from}${a.to ? `:${a.to}` : ''}`, tender: refOf(a.tenderId), section: 'MSPO templates' };
+    case 'upload-template':
+      return { action: a.replaceId ? 'Template replaced' : 'Template uploaded', detail: `${a.tpl.name} v${a.tpl.version} (${a.tpl.agency}, ${a.tpl.type})`, section: 'Templates' };
+    case 'upload-boilerplate': {
+      const kind = a.item.type === 'Certification' ? 'Certification' : 'Boilerplate';
+      return { action: `${kind} ${a.replaceId ? 'replaced' : 'uploaded'}`, detail: `${a.item.name} v${a.item.version}`, section: 'Templates' };
+    }
+    case 'update-template':
+      return { action: 'Template edited', detail: prev.templates.find((x) => x.id === a.id)?.name ?? '', section: 'Templates' };
+    case 'delete-template':
+      return { action: 'Template deleted', detail: prev.templates.find((x) => x.id === a.id)?.name ?? '', section: 'Templates' };
+    case 'update-boilerplate':
+      return { action: 'Boilerplate edited', detail: prev.boilerplate.find((x) => x.id === a.id)?.name ?? '', section: 'Templates' };
+    case 'delete-boilerplate':
+      return { action: 'Boilerplate deleted', detail: prev.boilerplate.find((x) => x.id === a.id)?.name ?? '', section: 'Templates' };
+    case 'archive-repo':
+      return { action: 'Record archived', detail: `${prev.repository.find((r) => r.id === a.id)?.name ?? ''} - compressed ${a.sizeFrom} to ${a.sizeTo}`, section: 'Historical data' };
+    case 'request-restore':
+      return { action: 'Restore requested', detail: prev.repository.find((r) => r.id === a.id)?.name ?? '', section: 'Historical data' };
+    case 'complete-restore':
+      return { system: true, action: 'Restore completed', detail: `${prev.repository.find((r) => r.id === a.id)?.name ?? ''} - files available`, section: 'Historical data' };
+    default:
+      return null; // navigation and intermediate job states are not user actions
+  }
+}
+
+function auditedReducer(state: AppState, a: Action): AppState {
+  const next = reducer(state, a);
+  const d = describe(state, a, next);
+  if (!d) return next;
+  const actor = d.system
+    ? SYSTEM_ACTOR
+    : { name: (a.type === 'login' ? a.user : state.user)?.name ?? 'Unknown', role: (a.type === 'login' ? a.user : state.user)?.roleLabel ?? '-' };
+  const { system: _system, ...rest } = d;
+  void _system;
+  const entry: AuditEntry = { id: `a-${Date.now()}-${++auditSeq}`, ts: new Date().toISOString(), user: actor.name, role: actor.role, ...rest };
+  return { ...next, audit: [...next.audit, entry] };
+}
+
 const initial: AppState = {
   user: null, // sign in via the login screen
   role: 'bd',
@@ -327,12 +660,15 @@ const initial: AppState = {
   boilerplate: BOILERPLATE,
   repository: REPOSITORY,
   backup: BACKUP,
+  audit: AUDIT,
+  rules: DEFAULT_RULES,
+  mspoDefaults: DEFAULT_MSPO_MAPPING,
 };
 
 const Ctx = createContext<{ state: AppState; dispatch: React.Dispatch<Action> } | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, initial);
+  const [state, dispatch] = useReducer(auditedReducer, initial);
   const value = useMemo(() => ({ state, dispatch }), [state]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

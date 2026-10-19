@@ -386,7 +386,7 @@ select { font: inherit; font-size: var(--fs-dense); padding: 3px 6px; border: 1p
 .subtabs-sticky { position: sticky; top: var(--bc-bar-h); z-index: 15; height: var(--bc-tabs-h); }
 .subtabs-sticky-top { top: 0; }
 .subtabs-sticky-below { top: var(--bc-tabs-h); }
-.subtabs button:disabled { color: var(--ink-3); cursor: not-allowed; opacity: .55; }
+.subtabs button:disabled, .subtabs button[aria-disabled="true"] { color: var(--ink-3); cursor: not-allowed; opacity: .55; }
 .bc-upload-action { display: flex; justify-content: flex-end; margin: 0 0 var(--sp-3); }
 .bc-upload-action > .upload-progress { width: 100%; }
 .bc-upload-row { display: flex; justify-content: flex-end; align-items: flex-end; gap: var(--sp-3); width: 100%; }
@@ -966,7 +966,7 @@ th.add-col:hover .add-col-btn { color: var(--brand-purple); border-color: var(--
 /* Self-review fixes */
 .step-marker { font-size: var(--fs-label); }
 .bc-scope .checks-panel table.grid th { position: static; }
-.subtabs button:disabled { color: var(--ink-disabled); cursor: not-allowed; }
+.subtabs button:disabled, .subtabs button[aria-disabled="true"] { color: var(--ink-disabled); cursor: not-allowed; }
 
 /* Round 2 fixes */
 .pager { justify-content: flex-end; }

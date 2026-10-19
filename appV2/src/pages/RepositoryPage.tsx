@@ -10,8 +10,8 @@ import * as XLSX from 'xlsx';
 import { canDo } from '../config';
 import { dateShort, ts } from '../lib/format';
 import { useStore } from '../state/store';
-import { Pager, SortTh, StatusPill, useAutoPager, useColFilters, useSort } from '../components/common';
-import { Button, ConfirmDialog } from '../ui/ui';
+import { Pager, SortTh, StatusPill, usePagedTable, useColFilters, useSort } from '../components/common';
+import { Button, ConfirmDialog, IconButton } from '../ui/ui';
 import { useToast } from '../ui/toast';
 import type { RepoRecord } from '../types';
 
@@ -54,7 +54,7 @@ export default function RepositoryPage() {
   };
   const rows = cf.apply(state.repository, colAcc);
   const sorted = apply(rows, colAcc);
-  const pager = useAutoPager(sorted);
+  const pager = usePagedTable(sorted);
   const fcol = (k: keyof typeof colAcc) => ({
     filterValues: state.repository.map((r) => String(colAcc[k](r))),
     filter: cf.filters[k],
@@ -71,6 +71,7 @@ export default function RepositoryPage() {
       ['Demo file generated from mock data; the live system serves the stored original.'],
     ]), 'Info');
     XLSX.writeFile(wb, `${name.replace(/\.[^.]+$/, '').replace(/\W+/g, '_')}.xlsx`);
+    dispatch({ type: 'log', event: { action: 'File downloaded', detail: `${r.name} - ${name}`, section: 'Historical data' } });
   };
 
   const archiveSizes = (r: RepoRecord) => {
@@ -80,7 +81,7 @@ export default function RepositoryPage() {
 
   return (
     <div className="fill-page">
-      <div className="table-viewport" ref={pager.viewportRef}>
+      <div className="table-viewport">
         <table className="grid">
           <thead>
             <tr>
@@ -176,16 +177,8 @@ export default function RepositoryPage() {
                                 {r.documents.map((name) => (
                                   <tr key={name}>
                                     <td><FileText size={13} aria-hidden style={{ verticalAlign: '-2px' }} /> {name}</td>
-                                    <td style={{ width: 130 }}>
-                                      <Button
-                                        compact
-                                        icon={Download}
-                                        disabled={locked}
-                                        title={locked ? lockTitle : undefined}
-                                        onClick={() => downloadFile(r, name)}
-                                      >
-                                        Download
-                                      </Button>
+                                    <td className="table-actions" style={{ width: 48 }}>
+                                      <IconButton label={locked ? lockTitle : `Download ${name}`} icon={Download} disabled={locked} onClick={() => downloadFile(r, name)} />
                                     </td>
                                   </tr>
                                 ))}
@@ -194,7 +187,7 @@ export default function RepositoryPage() {
                           </div>
                           <div>
                             <div className="muted small" style={{ margin: '4px 0' }}>
-                              {r.kind === 'Business case' ? 'Business case versions (latest first):' : 'Version history (latest first):'}
+                              Business case version history (latest first):
                             </div>
                             <table className="grid">
                               <tbody>
@@ -203,16 +196,8 @@ export default function RepositoryPage() {
                                     <td style={{ whiteSpace: 'nowrap' }}><b>v{v.v}</b> {i === 0 && <span className="badge badge-human">Latest</span>}</td>
                                     <td className="muted">{dateShort(v.date)} · {v.by}</td>
                                     <td>{v.note}</td>
-                                    <td style={{ width: 130 }}>
-                                      <Button
-                                        compact
-                                        icon={Download}
-                                        disabled={locked}
-                                        title={locked ? lockTitle : undefined}
-                                        onClick={() => downloadFile(r, `${r.name}_v${v.v}`)}
-                                      >
-                                        Download
-                                      </Button>
+                                    <td className="table-actions" style={{ width: 48 }}>
+                                      <IconButton label={locked ? lockTitle : `Download v${v.v}`} icon={Download} disabled={locked} onClick={() => downloadFile(r, `${r.name}_v${v.v}`)} />
                                     </td>
                                   </tr>
                                 ))}

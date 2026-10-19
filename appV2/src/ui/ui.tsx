@@ -120,6 +120,7 @@ export function ConfirmDialog({
   confirmLabel,
   danger,
   confirmDisabled,
+  wide,
   onConfirm,
   onClose,
 }: {
@@ -130,6 +131,8 @@ export function ConfirmDialog({
   danger?: boolean;
   /** disables the confirm button until a required acknowledgement is given */
   confirmDisabled?: boolean;
+  /** wider dialog for forms and file lists */
+  wide?: boolean;
   onConfirm: () => void;
   onClose: () => void;
 }) {
@@ -166,7 +169,7 @@ export function ConfirmDialog({
   if (!open) return null;
   return (
     <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title" ref={boxRef}>
+      <div className={`dialog ${wide ? 'dialog-wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby="dlg-title" ref={boxRef}>
         <h2 id="dlg-title" className="dialog-title">{title}</h2>
         <div className="dialog-body">{children}</div>
         <div className="dialog-actions">
@@ -209,6 +212,8 @@ export interface TabDef {
   key: string;
   label: string;
   disabled?: boolean;
+  /** tooltip explaining why a disabled tab is unavailable */
+  disabledHint?: string;
   /** optional badge, e.g. number of line items still to review */
   badge?: number;
   badgeTitle?: string;
@@ -233,7 +238,12 @@ export function TabsBar({
   const onKey = (e: React.KeyboardEvent, idx: number) => {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
     e.preventDefault();
-    const next = (idx + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+    const step = e.key === 'ArrowRight' ? 1 : -1;
+    let next = idx;
+    for (let i = 0; i < tabs.length; i++) {
+      next = (next + step + tabs.length) % tabs.length;
+      if (!tabs[next].disabled) break;
+    }
     refs.current[next]?.focus();
     onChange(tabs[next].key);
   };
@@ -247,7 +257,8 @@ export function TabsBar({
           aria-selected={active === t.key}
           tabIndex={active === t.key ? 0 : -1}
           className={active === t.key ? 'active' : ''}
-          disabled={t.disabled}
+          aria-disabled={t.disabled || undefined}
+          title={t.disabled ? t.disabledHint : undefined}
           onClick={() => { if (!t.disabled) onChange(t.key); }}
           onKeyDown={(e) => onKey(e, i)}
         >

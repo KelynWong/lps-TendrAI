@@ -1,7 +1,8 @@
 /* eslint-disable react-refresh/only-export-components */
-// Toast system: transient confirmations only (completed actions, non-blocking
-// info). Warnings/errors that need action do not auto-dismiss. Top-right under
-// the top bar, max 3 stacked, pause on hover, manual close always available.
+// Toast system: transient confirmations (completed actions, non-blocking info,
+// warnings). Every toast auto-dismisses; anything that must stay visible is a
+// banner instead. Top-right under the top bar, max 3 stacked, pause on hover,
+// manual close always available.
 
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -18,7 +19,9 @@ interface Toast {
 
 const ICONS = { success: CheckCircle2, info: Info, warning: AlertTriangle, error: XCircle };
 const LABELS = { success: 'Success', info: 'Info', warning: 'Warning', error: 'Error' };
-const AUTO_DISMISS_MS = 5000;
+/** Every toast disappears on its own; warnings and errors stay a little
+ *  longer so they can be read. Hover or focus pauses the timer. */
+const AUTO_DISMISS_MS: Record<ToastKind, number> = { success: 5000, info: 5000, warning: 8000, error: 8000 };
 
 const Ctx = createContext<{ push: (kind: ToastKind, title: string, detail?: string) => void } | null>(null);
 
@@ -44,10 +47,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     (kind: ToastKind, title: string, detail?: string) => {
       const id = seq.current++;
       setToasts((t) => [...t.slice(-2), { id, kind, title, detail }]); // max 3
-      // success/info auto-dismiss; warning/error stay until closed
-      if (kind === 'success' || kind === 'info') {
-        timers.current.set(id, window.setTimeout(() => dismiss(id), AUTO_DISMISS_MS));
-      }
+      timers.current.set(id, window.setTimeout(() => dismiss(id), AUTO_DISMISS_MS[kind]));
     },
     [dismiss],
   );
@@ -60,9 +60,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     }
   };
   const resume = (id: number, kind: ToastKind) => {
-    if (kind === 'success' || kind === 'info') {
-      timers.current.set(id, window.setTimeout(() => dismiss(id), AUTO_DISMISS_MS));
-    }
+    timers.current.set(id, window.setTimeout(() => dismiss(id), AUTO_DISMISS_MS[kind]));
   };
 
   const value = useMemo(() => ({ push }), [push]);

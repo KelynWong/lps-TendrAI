@@ -29,6 +29,9 @@ export interface CitationInfo {
   pageCount?: number;
   fileName?: string;
   references?: Array<{ location: string; excerpt: string }>;
+  /** sentences immediately before / after the cited passage, for context */
+  contextBefore?: string[];
+  contextAfter?: string[];
   /** Local demo path now; replace with a backend document URL later. */
   documentUrl?: string;
 }
@@ -47,7 +50,18 @@ export function useCitation() {
   return useContext(Ctx);
 }
 
-function LocalDocumentViewer({ src }: { src: string }) {
+/** PDF / Word viewer. After loading it searches for the cited passage and
+ *  highlights it in place (the viewer scrolls to the match); if the passage
+ *  cannot be found it opens at the cited page instead. `onLocated` reports
+ *  which of the two happened. */
+function LocalDocumentViewer({
+  src, page, find, onLocated,
+}: {
+  src: string;
+  page?: number;
+  find?: string;
+  onLocated?: (how: 'match' | 'page' | 'none', pageCount: number) => void;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -61,19 +75,60 @@ function LocalDocumentViewer({ src }: { src: string }) {
         if (cancelled || !containerRef.current) return;
         viewer = await client.createViewer({ container: containerRef.current, scrollMode: 'continuous' });
         await viewer.load(src);
+        if (cancelled) return;
+        const pages = viewer.pageCount;
+        if (find && find.trim().length > 8) {
+          // search a distinctive slice of the passage; fuzzy tolerates spacing differences
+          const query = find.trim().slice(0, 80);
+          const matches = await viewer.search(query, { fuzzy: true });
+          if (cancelled) return;
+          if (matches.length) {
+            viewer.searchNext();
+            onLocated?.('match', pages);
+            return;
+          }
+        }
+        if (page && pages > 0) {
+          viewer.goToPage(Math.min(page, pages));
+          onLocated?.('page', pages);
+        } else {
+          onLocated?.('none', pages);
+        }
       } catch (reason: unknown) {
         if (!cancelled) setError(reason instanceof Error ? reason.message : 'Unable to render document');
       }
-
     })();
     return () => {
       cancelled = true;
       viewer?.destroy();
       client?.destroy();
     };
-  }, [src]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src, page, find]);
   if (error) return <p className="error docx-error">{error}</p>;
-  return <div className="udoc-viewer" ref={containerRef} aria-label="Word document viewer" />;
+  return <div className="udoc-viewer" ref={containerRef} aria-label="Document viewer" />;
+}
+
+/** The cited passage with a few sentences of surrounding text. */
+function PassageWithContext({
+  location, excerpt, before, after, markRef,
+}: {
+  location: string;
+  excerpt: string;
+  before?: string[];
+  after?: string[];
+  markRef?: React.Ref<HTMLElement>;
+}) {
+  return (
+    <div className="docviewer-excerpt">
+      <div className="muted small" style={{ marginBottom: 4 }}><b>Extracted passage · {location}</b></div>
+      <p style={{ margin: 0, lineHeight: 1.6 }}>
+        {before?.length ? <span className="cite-context">{before.join(' ')} </span> : null}
+        <mark className="match" ref={markRef}>{excerpt}</mark>
+        {after?.length ? <span className="cite-context"> {after.join(' ')}</span> : null}
+      </p>
+    </div>
+  );
 }
 
 export function SpreadsheetDocumentViewer({ src, fileName, initialSheet }: { src: string; fileName: string; initialSheet?: string }) {
@@ -167,6 +222,7 @@ function DocumentViewer({ citation, onClose }: { citation: CitationInfo; onClose
   const [curPage, setCurPage] = useState(citation.page ?? 1);
   const [pageField, setPageField] = useState(String(citation.page ?? 1));
   const paged = !!citation.page && !citation.documentUrl; // mock page renderer only
+  const [located, setLocated] = useState('');
   useEffect(() => { setCurPage(citation.page ?? 1); setPageField(String(citation.page ?? 1)); }, [citation]);
   useEffect(() => { markRef.current?.scrollIntoView({ block: 'center' }); }, [citation, curPage]);
 
@@ -232,21 +288,28 @@ function DocumentViewer({ citation, onClose }: { citation: CitationInfo; onClose
           ).map((reference, index) => (
             <section className="docviewer-pane" aria-label={`${isTender ? 'Tender' : 'Business Case'} document reference ${index + 1}`} key={`${reference.location}-${index}`}>
               <div className="docviewer-pane-head"><FileText size={14} aria-hidden /> {citation.fileName ?? citation.title} · {reference.location}</div>
-              {citation.documentUrl && extension === 'pdf' ? (
+              {citation.documentUrl && (extension === 'pdf' || extension === 'docx' || extension === 'doc') ? (
                 <div className="document-viewer-stack">
-                  <iframe className="document-frame" src={citation.documentUrl} title={`${citation.fileName ?? citation.title} PDF`} />
-                  {reference.excerpt && <p className="docviewer-excerpt"><b>Highlighted extracted reference · {reference.location}:</b> <mark className="match">{reference.excerpt}</mark></p>}
+                  <LocalDocumentViewer
+                    src={citation.documentUrl}
+                    page={citation.page}
+                    find={reference.excerpt || undefined}
+                    onLocated={(how, pages) => setLocated(
+                      how === 'match' ? 'Passage found and highlighted in the document.'
+                        : how === 'page' ? `Opened at page ${Math.min(citation.page ?? 1, pages)} of ${pages}. The exact passage is shown below.`
+                          : '',
+                    )}
+                  />
+                  {reference.excerpt && (
+                    <>
+                      {located && <div className="muted small" style={{ padding: '6px 12px 0' }} role="status">{located}</div>}
+                      <PassageWithContext location={reference.location} excerpt={reference.excerpt} before={citation.contextBefore} after={citation.contextAfter} />
+                    </>
+                  )}
                 </div>
               ) : citation.documentUrl && (extension === 'xlsx' || extension === 'xlsm') ? (
                 <div className="docpage-scroll">
                   <SpreadsheetDocumentViewer src={citation.documentUrl} fileName={citation.fileName ?? citation.title} initialSheet={reference.location} />
-                </div>
-              ) : citation.documentUrl && (extension === 'docx' || extension === 'doc') ? (
-                <div className="docpage-scroll">
-                  <div className="docx-viewer-wrap">
-                    <LocalDocumentViewer src={citation.documentUrl} />
-                    {reference.excerpt && <p className="docviewer-excerpt"><b>Highlighted extracted reference · {reference.location}:</b> <mark className="match">{reference.excerpt}</mark></p>}
-                  </div>
                 </div>
               ) : <div className="docpage-scroll"><div className="docpage">
                 <div className="docpage-title">{citation.title}</div>
@@ -254,8 +317,9 @@ function DocumentViewer({ citation, onClose }: { citation: CitationInfo; onClose
                 {!paged || curPage === (citation.page ?? 1) ? (
                   <>
                     <h4>{reference.location}</h4>
-                    <p>The extracted reference is shown below in the relevant document section:</p>
+                    {citation.contextBefore?.map((s, i) => <p key={`b${i}`} className="cite-context">{s}</p>)}
                     <p><mark className="match" ref={index === 0 ? markRef : undefined}>{reference.excerpt}</mark></p>
+                    {citation.contextAfter?.map((s, i) => <p key={`a${i}`} className="cite-context">{s}</p>)}
                   </>
                 ) : (
                   <>
@@ -267,7 +331,7 @@ function DocumentViewer({ citation, onClose }: { citation: CitationInfo; onClose
                     <p><button className="link-btn" type="button" onClick={() => goToPage(citation.page ?? 1)}>Go back to the cited passage (page {citation.page})</button></p>
                   </>
                 )}
-                <div className="docpage-footer muted small">Rendered preview of the uploaded document. The highlighted passage is the extracted reference.</div>
+                <div className="docpage-footer muted small">Rendered preview of the uploaded document. The highlighted passage is the extracted reference; the text around it is shown for context.</div>
               </div></div>}
             </section>
           ))}

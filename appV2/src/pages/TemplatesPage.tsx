@@ -1,17 +1,22 @@
 // Template and boilerplate libraries: agency templates (MHA and ATFM kept
-// separate, generic fallbacks, MSPO plans), certifications with expiry and
-// company boilerplate - each with upload, preview, edit and delete.
+// separate, generic fallbacks), certifications with issuer and expiry, and
+// company boilerplate - each with upload (replace = new version), version
+// history, preview, edit and delete. Only the latest version of an item is
+// matched to tenders.
 
-import { useState } from 'react';
-import { AlertTriangle, Eye, FileUp, Pencil, Trash2 } from 'lucide-react';
+import { Fragment, useState } from 'react';
+import type { ReactNode } from 'react';
+import { AlertTriangle, ChevronDown, ChevronRight, Eye, Pencil, Trash2 } from 'lucide-react';
 import { canDo } from '../config';
 import { dateShort } from '../lib/format';
 import { useStore } from '../state/store';
 import { SortTh, useColFilters, useSort } from '../components/common';
-import { ConfirmDialog, IconButton } from '../ui/ui';
+import { LibraryUpload } from '../components/library';
+import { BackToTender } from '../components/backToTender';
+import { ConfirmDialog, IconButton, TabsBar } from '../ui/ui';
 import { useToast } from '../ui/toast';
 import { useCitation } from '../ui/citation';
-import type { Boilerplate, TemplateDoc } from '../types';
+import type { Boilerplate, LibraryVersion, TemplateDoc } from '../types';
 
 type EditTarget =
   | { kind: 'template'; item: TemplateDoc }
@@ -29,16 +34,20 @@ export default function TemplatesPage() {
   const backgrounds = state.boilerplate.filter((b) => b.type === 'Company background');
   const [editing, setEditing] = useState<EditTarget | null>(null);
   const [deleting, setDeleting] = useState<DeleteTarget | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // one sub-tab per library, so certificates and boilerplate are never buried
+  // under a long template list
+  // uploads from a tender land on the matching sub tab
+  const [libTab, setLibTab] = useState(() => (state.nav?.page === 'templates' && state.nav.sub ? state.nav.sub : 'templates'));
   const [editForm, setEditForm] = useState({ name: '', version: '', expires: '' });
 
-  const tenderName = (id: string) => state.tenders.find((t) => t.id === id)?.ref || state.tenders.find((t) => t.id === id)?.name || id;
   const accessors = {
     name: (t: TemplateDoc) => t.name,
     agency: (t: TemplateDoc) => t.agency,
     type: (t: TemplateDoc) => t.type,
     version: (t: TemplateDoc) => t.version,
+    uploadedBy: (t: TemplateDoc) => t.uploadedBy,
     updated: (t: TemplateDoc) => t.updated,
-    usedBy: (t: TemplateDoc) => t.usedBy.map(tenderName).join(', '),
   };
   const filterColumn = (key: keyof typeof accessors) => ({
     filterValues: state.templates.map((t) => String(accessors[key](t))),
@@ -49,39 +58,17 @@ export default function TemplatesPage() {
   const today = new Date().toISOString().slice(0, 10);
   const soon = new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10);
 
-  const uploadTemplate = (file: File | undefined) => {
-    if (!file) return;
-    const tpl: TemplateDoc = {
-      id: `tpl-${Date.now()}`,
-      name: file.name.replace(/\.[^.]+$/, ''),
-      agency: 'Generic',
-      type: 'Form',
-      version: '1.0',
-      updated: new Date().toISOString().slice(0, 10),
-      usedBy: [],
-    };
-    dispatch({ type: 'add-template', tpl });
-    toast.push('success', 'Template added', `${tpl.name} stored under ${tpl.agency} (demo - only the file name is used).`);
-  };
-
-  const uploadBoilerplate = (file: File | undefined, type: Boilerplate['type']) => {
-    if (!file) return;
-    const item: Boilerplate = {
-      id: `bp-${Date.now()}`,
-      name: file.name.replace(/\.[^.]+$/, ''),
-      type,
-      version: '1.0',
-      owner: state.user?.name ?? 'BD team',
-    };
-    dispatch({ type: 'add-boilerplate', item });
-    toast.push('success', `${type} added`, `${item.name} stored (demo - only the file name is used).`);
-  };
+  const toggleRow = (id: string) => setExpanded((cur) => {
+    const next = new Set(cur);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   const previewTemplate = (t: TemplateDoc) => show({
     docId: t.id,
     title: t.name,
-    fileName: `${t.name.replace(/\W+/g, '_')}.${t.type === 'Compliance table' || t.type === 'MSPO plan' ? 'xlsx' : 'docx'}`,
-    documentUrl: t.type === 'Compliance table' || t.type === 'MSPO plan'
+    fileName: `${t.name.replace(/\W+/g, '_')}.${t.type === 'Compliance table' ? 'xlsx' : 'docx'}`,
+    documentUrl: t.type === 'Compliance table'
       ? '/mock-documents/MHA_business_case_demo.xlsm'
       : '/mock-documents/supplier-response.docx',
     similarity: 1,
@@ -122,7 +109,7 @@ export default function TemplatesPage() {
       dispatch({
         type: 'update-boilerplate',
         id: editing.item.id,
-        patch: { name: editForm.name.trim(), version: editForm.version.trim(), expires: editForm.expires || undefined },
+        patch: { name: editForm.name.trim(), version: editForm.version.trim(), expires: editForm.expires || undefined, updated: today },
       });
     }
     toast.push('success', 'Changes saved', `${editForm.name} updated.`);
@@ -148,6 +135,48 @@ export default function TemplatesPage() {
     return <span className="muted">{dateShort(expires)}</span>;
   };
 
+  const expandCell = (id: string, name: string, history?: LibraryVersion[]) => (
+    <td className="expand-cell">
+      {history && history.length > 0 && (
+        <button
+          className="expand-btn"
+          aria-expanded={expanded.has(id)}
+          aria-label={`${expanded.has(id) ? 'Hide' : 'Show'} version history of ${name}`}
+          onClick={() => toggleRow(id)}
+        >
+          {expanded.has(id) ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
+        </button>
+      )}
+    </td>
+  );
+
+  /** Version history rows shown under an expanded item. */
+  const historyRow = (id: string, colSpan: number, current: { version: string; updated: string; uploadedBy: string }, history?: LibraryVersion[]) =>
+    expanded.has(id) && history?.length ? (
+      <tr className="expand-row">
+        <td />
+        <td colSpan={colSpan - 1}>
+          <div className="muted small" style={{ margin: '4px 0' }}>
+            Version history (latest first) - only the latest version is matched to tenders:
+          </div>
+          <table className="grid narrow">
+            <tbody>
+              <tr>
+                <td style={{ whiteSpace: 'nowrap' }}><b>v{current.version}</b> <span className="badge badge-human">Latest</span></td>
+                <td className="muted">{dateShort(current.updated)} · {current.uploadedBy}</td>
+              </tr>
+              {history.map((h) => (
+                <tr key={h.version}>
+                  <td className="mono">v{h.version}</td>
+                  <td className="muted">{dateShort(h.updated)} · {h.uploadedBy}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </td>
+      </tr>
+    ) : null;
+
   const rowActions = (target: EditTarget, onPreview: () => void) => (
     <td className="table-actions" style={{ whiteSpace: 'nowrap' }}>
       <IconButton label={`Preview ${target.item.name}`} icon={Eye} onClick={onPreview} />
@@ -156,95 +185,126 @@ export default function TemplatesPage() {
     </td>
   );
 
-  const uploadButton = (label: string, onFile: (f: File | undefined) => void) =>
-    editable ? (
-      <label className="btn btn-secondary btn-compact" style={{ cursor: 'pointer' }}>
-        <FileUp size={14} aria-hidden /> {label}
-        <input type="file" className="sr-only" aria-label={label} onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ''; }} />
-      </label>
-    ) : null;
+  /** Section heading: title (with an optional note right beside it) on the
+   *  left, upload button on the right. */
+  const heading = (title: string, upload: ReactNode, note?: ReactNode) => (
+    <div className="section-heading lib-heading">
+      <div className="heading-with-note">
+        {title && <h3>{title}</h3>}
+        {note}
+      </div>
+      {upload}
+    </div>
+  );
+
+  const expiredCount = certs.filter((c) => c.expires && c.expires < today).length;
 
   return (
     <div>
-      <section>
-        <div className="section-heading">
-          <h3>Templates</h3>
-          {uploadButton('Upload template', uploadTemplate)}
-        </div>
-        <table className="grid">
-          <thead>
-            <tr>
-              <SortTh label="Name" k="name" sort={sort} onToggle={toggle} {...filterColumn('name')} />
-              <SortTh label="Agency" k="agency" sort={sort} onToggle={toggle} {...filterColumn('agency')} />
-              <SortTh label="Type" k="type" sort={sort} onToggle={toggle} {...filterColumn('type')} />
-              <SortTh label="Version" k="version" sort={sort} onToggle={toggle} {...filterColumn('version')} />
-              <SortTh label="Last updated" k="updated" sort={sort} onToggle={toggle} {...filterColumn('updated')} />
-              <SortTh label="Used by" k="usedBy" sort={sort} onToggle={toggle} {...filterColumn('usedBy')} />
-              <th aria-label="Actions" />
-            </tr>
-          </thead>
-          <tbody>
-            {templates.map((t) => (
-              <tr key={t.id}>
-                <td><b>{t.name}</b></td>
-                <td><span className="badge badge-sector">{t.agency}</span></td>
-                <td>{t.type}</td>
-                <td className="mono">v{t.version}</td>
-                <td className="muted">{dateShort(t.updated)}</td>
-                <td className="muted small">{t.usedBy.length ? t.usedBy.map(tenderName).join(', ') : '-'}</td>
-                {rowActions({ kind: 'template', item: t }, () => previewTemplate(t))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
+      {state.returnTo && <div className="back-row"><BackToTender /></div>}
+      <TabsBar
+        tabs={[
+          { key: 'templates', label: 'Templates' },
+          { key: 'certs', label: 'Certifications', badge: expiredCount, badgeTitle: `${expiredCount} certification(s) expired` },
+          { key: 'boilerplate', label: 'Company boilerplate' },
+        ]}
+        active={libTab}
+        onChange={setLibTab}
+      />
 
-      <div className="two-col">
+      {libTab === 'templates' && (
         <section>
-          <div className="section-heading">
-            <h3>Certifications</h3>
-            {certs.some((c) => c.expires && c.expires < today) && (
-              <span className="attn" role="status">
-                <AlertTriangle size={13} aria-hidden /> At least one certification has expired - renew and upload the new copy
-              </span>
-            )}
-            {uploadButton('Upload certification', (f) => uploadBoilerplate(f, 'Certification'))}
-          </div>
+          {heading('', <LibraryUpload kind="template" />)}
           <table className="grid">
-            <thead><tr><th>Certificate</th><th>Version</th><th>Expiry</th><th aria-label="Actions" /></tr></thead>
+            <thead>
+              <tr>
+                <th aria-label="Expand" />
+                <SortTh label="Name" k="name" sort={sort} onToggle={toggle} {...filterColumn('name')} />
+                <SortTh label="Agency" k="agency" sort={sort} onToggle={toggle} {...filterColumn('agency')} />
+                <SortTh label="Type" k="type" sort={sort} onToggle={toggle} {...filterColumn('type')} />
+                <SortTh label="Version" k="version" sort={sort} onToggle={toggle} {...filterColumn('version')} />
+                <SortTh label="Uploaded by" k="uploadedBy" sort={sort} onToggle={toggle} {...filterColumn('uploadedBy')} />
+                <SortTh label="Last updated" k="updated" sort={sort} onToggle={toggle} {...filterColumn('updated')} />
+                <th aria-label="Actions" />
+              </tr>
+            </thead>
+            <tbody>
+              {templates.map((t) => (
+                <Fragment key={t.id}>
+                  <tr>
+                    {expandCell(t.id, t.name, t.history)}
+                    <td><b>{t.name}</b></td>
+                    <td><span className="badge badge-sector">{t.agency}</span></td>
+                    <td>{t.type}</td>
+                    <td className="mono">v{t.version}</td>
+                    <td className="muted">{t.uploadedBy}</td>
+                    <td className="muted">{dateShort(t.updated)}</td>
+                    {rowActions({ kind: 'template', item: t }, () => previewTemplate(t))}
+                  </tr>
+                  {historyRow(t.id, 8, t, t.history)}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {libTab === 'certs' && (
+        <section>
+          {heading(
+            '',
+            <LibraryUpload kind="certification" />,
+            expiredCount > 0 ? (
+              <span className="attn" role="status">
+                <AlertTriangle size={13} aria-hidden /> {expiredCount} certification{expiredCount > 1 ? 's have' : ' has'} expired - renew and upload the new copy
+              </span>
+            ) : undefined,
+          )}
+          <table className="grid">
+            <thead><tr><th aria-label="Expand" /><th>Certificate</th><th>Version</th><th>Expiry</th><th>Uploaded by</th><th>Last updated</th><th aria-label="Actions" /></tr></thead>
             <tbody>
               {certs.map((b) => (
-                <tr key={b.id}>
-                  <td><b>{b.name}</b></td>
-                  <td className="mono">v{b.version}</td>
-                  <td>{expiryCell(b.expires)}</td>
-                  {rowActions({ kind: 'boilerplate', item: b }, () => previewBoilerplate(b))}
-                </tr>
+                <Fragment key={b.id}>
+                  <tr>
+                    {expandCell(b.id, b.name, b.history)}
+                    <td><b>{b.name}</b></td>
+                    <td className="mono">v{b.version}</td>
+                    <td>{expiryCell(b.expires)}</td>
+                    <td className="muted">{b.uploadedBy}</td>
+                    <td className="muted" style={{ whiteSpace: 'nowrap' }}>{dateShort(b.updated)}</td>
+                    {rowActions({ kind: 'boilerplate', item: b }, () => previewBoilerplate(b))}
+                  </tr>
+                  {historyRow(b.id, 7, b, b.history)}
+                </Fragment>
               ))}
             </tbody>
           </table>
         </section>
+      )}
 
+      {libTab === 'boilerplate' && (
         <section>
-          <div className="section-heading">
-            <h3>Company boilerplate</h3>
-            {uploadButton('Upload boilerplate', (f) => uploadBoilerplate(f, 'Company background'))}
-          </div>
+          {heading('', <LibraryUpload kind="boilerplate" />)}
           <table className="grid">
-            <thead><tr><th>Item</th><th>Version</th><th>Owner</th><th aria-label="Actions" /></tr></thead>
+            <thead><tr><th aria-label="Expand" /><th>Item</th><th>Version</th><th>Uploaded by</th><th>Last updated</th><th aria-label="Actions" /></tr></thead>
             <tbody>
               {backgrounds.map((b) => (
-                <tr key={b.id}>
-                  <td><b>{b.name}</b></td>
-                  <td className="mono">v{b.version}</td>
-                  <td className="muted">{b.owner}</td>
-                  {rowActions({ kind: 'boilerplate', item: b }, () => previewBoilerplate(b))}
-                </tr>
+                <Fragment key={b.id}>
+                  <tr>
+                    {expandCell(b.id, b.name, b.history)}
+                    <td><b>{b.name}</b></td>
+                    <td className="mono">v{b.version}</td>
+                    <td className="muted">{b.uploadedBy}</td>
+                    <td className="muted" style={{ whiteSpace: 'nowrap' }}>{dateShort(b.updated)}</td>
+                    {rowActions({ kind: 'boilerplate', item: b }, () => previewBoilerplate(b))}
+                  </tr>
+                  {historyRow(b.id, 6, b, b.history)}
+                </Fragment>
               ))}
             </tbody>
           </table>
         </section>
-      </div>
+      )}
 
       <ConfirmDialog
         open={!!editing}
@@ -255,12 +315,13 @@ export default function TemplatesPage() {
         onConfirm={commitEdit}
       >
         <div className="hd-form">
-          <label>Name<input value={editForm.name} autoFocus onChange={(e) => setEditForm((c) => ({ ...c, name: e.target.value }))} /></label>
+          <label>Name<span className="req" aria-hidden>*</span><input value={editForm.name} autoFocus onChange={(e) => setEditForm((c) => ({ ...c, name: e.target.value }))} /></label>
           <label>Version<input value={editForm.version} onChange={(e) => setEditForm((c) => ({ ...c, version: e.target.value }))} /></label>
           {editing?.kind === 'boilerplate' && editing.item.type === 'Certification' && (
             <label>Expiry date<input type="date" value={editForm.expires} onChange={(e) => setEditForm((c) => ({ ...c, expires: e.target.value }))} /></label>
           )}
         </div>
+        <p className="muted small">Editing changes the details only. To store a new file, upload it under the same name - that creates a new version.</p>
       </ConfirmDialog>
 
       <ConfirmDialog
@@ -272,8 +333,8 @@ export default function TemplatesPage() {
         onConfirm={commitDelete}
       >
         <p>
-          <b>{deleting?.item.name}</b> is removed from the library and can no longer be matched to
-          tenders. Documents already generated from it are unaffected.
+          <b>{deleting?.item.name}</b> and its version history are removed from the library and can
+          no longer be matched to tenders. Documents already generated from it are unaffected.
         </p>
       </ConfirmDialog>
     </div>

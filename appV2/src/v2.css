@@ -70,6 +70,17 @@
 .mapping-panel { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); margin: var(--sp-3) 0; }
 .mapping-panel summary { cursor: pointer; padding: 8px 12px; font-weight: 600; color: var(--ink-secondary); }
 .mapping-panel .two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--sp-3); padding: var(--sp-2) var(--sp-3) var(--sp-3); }
+.mspo-map-stack { display: flex; flex-direction: column; gap: var(--sp-4); }
+.mapping-panel .mspo-map-stack { padding: var(--sp-2) var(--sp-3) var(--sp-3); }
+.mspo-inputs { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: var(--sp-3); margin: var(--sp-3) 0; }
+.mspo-period { flex-basis: 100%; }
+.mspo-inputs-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: var(--sp-3); }
+.mspo-inputs-grid { display: grid; grid-template-columns: 1.4fr repeat(5, minmax(120px, 1fr)); gap: var(--sp-3); align-items: start; }
+@media (max-width: 1100px) { .mspo-inputs-grid { grid-template-columns: repeat(3, 1fr); } }
+.mspo-inputs .field { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-label); font-weight: 600; color: var(--ink-secondary); }
+.mspo-inputs .field input { font-weight: 400; }
+.mspo-inputs .field .small { font-weight: 400; }
+td.mspo-blank { color: var(--ink-tertiary, var(--ink-secondary)); font-style: italic; background: var(--surface-sunken, var(--surface)); }
 
 .row-selected td { background: var(--brand-purple-subtle); }
 
@@ -84,8 +95,10 @@
    ResizeObserver; the pager footer is always visible; the page never scrolls. */
 main:has(> .fill-page) { overflow: hidden; padding-bottom: var(--sp-2); display: flex; flex-direction: column; }
 .fill-page { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.fill-page .table-viewport { flex: 1; min-height: 0; overflow: hidden; }
+.fill-page .table-viewport { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--border); background: var(--surface); }
+.fill-page .table-viewport > table.grid { border: none; }
 .fill-page .pager { margin: var(--sp-2) 0 0; flex: none; }
+.pager-size { display: inline-flex; align-items: center; gap: 6px; margin-right: var(--sp-2); }
 
 /* ---- Processing job panel --------------------------------------------------- */
 .job-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--sp-3) var(--sp-4); margin-bottom: var(--sp-3); }
@@ -108,6 +121,73 @@ main:has(> .fill-page) { overflow: hidden; padding-bottom: var(--sp-2); display:
 /* A label styled as a button that is currently unavailable (file inputs) */
 .btn-disabled-label { opacity: 0.55; cursor: not-allowed; }
 
+/* Section heading with a note right beside the title (left-aligned) */
+.heading-with-note { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; flex-wrap: wrap; }
+
+/* Audit log: keep long details to one line so rows-per-page stays stable */
+.audit-detail { display: block; max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.audit-detail-cell { max-width: 560px; }
+.audit-detail-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.audit-detail-full { white-space: normal; overflow-wrap: anywhere; }
+.audit-detail-full ul { margin: 2px 0 0; padding-left: 18px; }
+.audit-detail-toggle { display: inline-flex; align-items: center; gap: 3px; font-size: var(--fs-label); }
+.audit-filters .back-link { align-self: flex-end; margin-bottom: 8px; }
+
+/* Surrounding text around a cited passage in the source viewer */
+.cite-context { color: var(--ink-secondary); }
+
+/* Space between the Documents toolbar (Add documents / Process) and what follows */
+.pack-toolbar { margin: var(--sp-3) 0; }
+
+/* Business case rules page */
+.row-disabled td { color: var(--ink-disabled); }
+.rule-fieldset { border: 1px solid var(--border); border-radius: var(--radius); padding: var(--sp-2) var(--sp-3) var(--sp-3); margin: var(--sp-3) 0 0; }
+.rule-fieldset legend { font-size: var(--fs-label); font-weight: 600; color: var(--ink-secondary); padding: 0 4px; }
+.rule-kinds { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); }
+.rule-fieldset .hd-form { margin-bottom: 0; }
+.map-cell-input { width: 72px; font: inherit; padding: 2px 6px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--ink); }
+.map-rows-input { width: 64px; font: inherit; padding: 2px 6px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--ink); }
+.mapping-plan-head { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; font-weight: 600; }
+/* side-by-side mapping tables share one height; their rows grow to fill it */
+.map-col { display: flex; flex-direction: column; }
+.map-col > table.grid { flex: 1; }
+/* rule editor: name and severity share a 2:1 row, description below */
+.rule-head-grid { display: grid; grid-template-columns: 2fr 1fr; gap: var(--sp-3); }
+.rule-head-grid label { display: block; font-size: var(--fs-label); color: var(--ink-secondary); font-weight: 600; }
+/* same field look as .hd-form */
+.rule-head-grid input, .rule-head-grid select, .rule-tolerance input, .rule-tolerance select, .cell-picker select, .cell-picker input {
+  padding: 7px 9px; font: inherit; font-size: var(--fs-dense); border: 1px solid var(--border-strong);
+  border-radius: var(--radius); background: var(--surface); color: var(--ink); max-width: none; box-sizing: border-box;
+}
+.rule-head-grid input, .rule-head-grid select { display: block; width: 100%; margin-top: 4px; }
+.rule-head-full { grid-column: 1 / -1; }
+.rule-operands { display: flex; align-items: flex-start; gap: var(--sp-3); flex-wrap: wrap; margin-top: var(--sp-3); }
+.rule-op { align-self: center; font-weight: 600; color: var(--ink-secondary); padding-top: 14px; }
+.rule-tolerance { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-label); color: var(--ink-secondary); font-weight: 600; }
+.rule-tolerance input, .rule-tolerance select { width: 110px; }
+.cell-picker { display: flex; flex-direction: column; gap: 4px; min-width: 260px; flex: 1; }
+.cell-picker-label { font-size: var(--fs-label); color: var(--ink-secondary); font-weight: 600; }
+.cell-picker-row { display: flex; gap: var(--sp-2); }
+.cell-picker-ref { width: 110px; }
+.mapping-plan-head label { font-weight: 400; }
+
+/* Certificate on file (Qualification tab) */
+.cert-cell { display: flex; align-items: center; gap: var(--sp-1); }
+.cert-cell > span:first-child { min-width: 0; }
+.draft-file { display: inline-flex; align-items: center; gap: var(--sp-1); }
+.draft-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+
+/* Upload dialog: staged file list */
+.upload-list { list-style: none; margin: var(--sp-3) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); max-height: 46vh; overflow: auto; }
+.upload-item { border: 1px solid var(--border); border-radius: var(--radius); padding: var(--sp-2) var(--sp-3); background: var(--surface); }
+.upload-item-head { display: flex; align-items: center; gap: var(--sp-2); }
+.upload-item-icon { color: var(--ink-secondary); flex: none; }
+.upload-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.upload-item-state { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.upload-item .upload-progress-track { margin-top: 6px; }
+.upload-item-fields .hd-form { margin: var(--sp-2) 0 0; }
+.upload-item-fields .ref-issue { margin-top: var(--sp-2); }
+
 /* Required-field marker in forms */
 .req { color: var(--error); margin-left: 2px; }
 
@@ -129,3 +209,29 @@ main:has(> .fill-page) { overflow: hidden; padding-bottom: var(--sp-2); display:
 /* Demo role switcher in the top bar */
 .role-switch { display: flex; align-items: center; gap: 6px; font-size: var(--fs-label); font-weight: 600; color: var(--ink-secondary); white-space: nowrap; }
 .role-switch select { font: inherit; font-size: var(--fs-label); padding: 4px 6px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--ink); max-width: 170px; }
+
+/* the drop area is a keyboard-operable button */
+.dropzone:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* status pills never wrap mid-label (wide tables scroll sideways instead) */
+.pill { white-space: nowrap; }
+
+/* MSPO tab: business case details form and full-length previews */
+.mspo-form { grid-template-columns: 1.5fr repeat(5, minmax(120px, 1fr)); margin-bottom: 0; }
+@media (max-width: 1100px) { .mspo-form { grid-template-columns: repeat(3, 1fr); } }
+.mspo-form .mspo-help { display: block; margin-top: 4px; font-weight: 400; }
+.mspo-form input:disabled { background: var(--surface-sunken); color: var(--ink); }
+.mspo-period { margin-top: var(--sp-2); }
+.mspo-preview { max-height: 420px; overflow: auto; }
+.mspo-preview table.grid thead th { position: sticky; top: 0; z-index: 2; }
+
+/* Templates page: space between the upload button row and the table */
+.back-row { margin: 0 0 var(--sp-3); }
+.audit-filters .btn { align-self: flex-end; }
+.lib-heading { margin: var(--sp-3) 0 var(--sp-3); }
+.mspo-preview-head { font-size: var(--fs-h3); font-weight: 600; margin: var(--sp-4) 0 var(--sp-2); }
+.mspo-preview-head .muted { font-weight: 400; }
+
+/* Clauses: edited but not yet saved */
+select.cell-changed { border-color: var(--warning); background: var(--warning-tint); }
+td.cell-changed-td { background: var(--warning-tint); }

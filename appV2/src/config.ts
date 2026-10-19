@@ -1,7 +1,7 @@
 /** Product name in one place (keep in sync with the existing app) */
 export const APP_NAME = 'TendrAI';
 
-export type Role = 'bd' | 'bidding-manager' | 'presales' | 'delivery' | 'drb';
+export type Role = 'bd' | 'bidding-manager' | 'presales' | 'delivery' | 'finance' | 'drb';
 
 export interface UserInfo {
   name: string;
@@ -16,6 +16,8 @@ export const USERS: UserInfo[] = [
   { name: 'John Price', email: 'john.price@lpstech.com', role: 'bidding-manager', roleLabel: 'Bidding Manager' },
   { name: 'Chee Wee', email: 'chee.wee@lpstech.com', role: 'presales', roleLabel: 'Presales' },
   { name: 'Priya Nair', email: 'priya.nair@lpstech.com', role: 'delivery', roleLabel: 'Delivery' },
+  // Finance sees the same tender and business case views as the working roles, read-only
+  { name: 'Ruey Lin', email: 'ruey.lin@lpstech.com', role: 'finance', roleLabel: 'Finance' },
   { name: 'Eng Chuan Puay', email: 'ecpuay@lpstech.com', role: 'drb', roleLabel: 'Head of South East Asia' },
   { name: 'Thomas Low', email: 'thomas.low@lpstech.com', role: 'drb', roleLabel: 'Head of Singapore Delivery & CEO, LPS' },
   { name: 'Ethan Lim', email: 'ethan.lim@lpstech.com', role: 'drb', roleLabel: 'Senior Manager Financial P&A' },
@@ -35,7 +37,11 @@ export const canDo = {
   generateDocs: (r: Role) => r === 'bidding-manager',
   manageTemplates: (r: Role) => r === 'bd' || r === 'bidding-manager',
   manageRepo: (r: Role) => r === 'bd',
+  /** Final Check rules and MSPO mapping defaults */
+  manageRules: (r: Role) => r === 'bd',
   recordOutcome: (r: Role) => r === 'drb',
+  /** commercial figures (Won TCV, needs attention, TCV/cost/EBITDA columns) */
+  viewFinancials: (r: Role) => r === 'finance' || r === 'drb',
 };
 
 /** Workflow stepper every tender shows */
@@ -50,8 +56,9 @@ export const WORKFLOW_STEPS = [
 
 /** Every guess that needs confirming, shown on the Assumptions page */
 export const ASSUMPTIONS: { area: string; assumption: string }[] = [
-  { area: 'MSPO product plan', assumption: 'The product plan template has ONE data sheet ("Sub Grid For Quote Line", 17 columns incl. three "(Do Not Modify)" system columns); verified against the template file supplied earlier, but re-confirm it is the current version.' },
-  { area: 'MSPO resource plan', assumption: 'The resource plan template has ONE data sheet ("Resource Plans For Quoteline", 20 columns) and expects one row per labour line per fiscal year.' },
+  { area: 'MSPO product plan', assumption: 'Sheet "Sub Grid For Quote Line": three hidden (Do Not Modify) columns, then 11 columns. Quantity spans the fiscal-year columns (H6 onward), so each business case line becomes one MSPO row per fiscal year; the demo splits quantity evenly because the mock data holds one quantity per line.' },
+  { area: 'MSPO resource plan', assumption: 'Sheet "Resource Plans For Quoteline": one row per labour line per fiscal year, FY labels from Resource Plan row 6 (26/27 becomes FY26), months Apr-Mar keyed in after download. Position Name = Skill, numbered when several lines share a skill (to confirm).' },
+  { area: 'MSPO quote line', assumption: 'One quote line is created in MSPO per tender and is the same for the product, resource and billing plans.' },
   { area: 'Project types', assumption: 'Milestone-based: Delivery Date = milestone date, quantity = committed units. Time-based: UoM = month, one row per charging period. Usage-based: quantity = estimated volume, flagged "subject to actuals". The real MSPO rules per project type are unconfirmed.' },
   { area: 'Final Check', assumption: 'Rules mirror the Excel template\'s Final Check list (billing = CCB/TCV, plan totals reconcile with Summary, iRate resolvable, cash-flow consistency). Exact tolerance (assumed: within S$1) to confirm.' },
   { area: 'Business case parsing', assumption: 'Business case uploads accept .xlsx and macro-enabled .xlsm files. Workbooks are best-effort parsed from sheets named "Product Plan", "Resource Plan" and "Basic Info"; otherwise mock parsed data is used.' },

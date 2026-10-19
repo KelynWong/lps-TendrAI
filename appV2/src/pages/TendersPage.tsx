@@ -5,19 +5,22 @@
 import { useState } from 'react';
 import { AlertTriangle, ArrowLeft, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useStore, useTender } from '../state/store';
-import { Pager, SortTh, StatusPill, useAutoPager, useColFilters, useSort } from '../components/common';
+import { Pager, SortTh, StatusPill, usePagedTable, useColFilters, useSort } from '../components/common';
 import { Button, Banner, ConfirmDialog, IconButton, TabsBar } from '../ui/ui';
 import { TenderPackSection, useJobSim, docCounts } from '../components/rfp';
 import { BcSection, DrbSummarySection, DrbBcSection } from '../components/bc';
 import { money } from '../lib/format';
+import { bcFigures, latestParsedBc } from '../lib/figures';
+import { canDo } from '../config';
 import { useToast } from '../ui/toast';
 import { dateShort, ts } from '../lib/format';
-import { failedChecks, runFinalChecks } from '../rules/finalChecks';
+import { failedChecks, runFinalChecks, type RuleDef } from '../rules/finalChecks';
 import type { Tender, TenderStatusReason } from '../types';
+import { useLeaveGuard } from '../lib/leaveGuard';
 
 // ---- "Needs attention" summary (list column + detail banners) -----------------
 
-function attentionItems(t: Tender): string[] {
+function attentionItems(t: Tender, rules: RuleDef[]): string[] {
   const items: string[] = [];
   const today = new Date().toISOString().slice(0, 10);
   if (t.processFailed) items.push('Processing failed');
@@ -27,7 +30,7 @@ function attentionItems(t: Tender): string[] {
   if ((t.status === 'Draft' || t.status === 'Active') && t.closingDate && t.closingDate < today) items.push('Closing date passed');
   const lvBc = t.bcVersions[t.bcVersions.length - 1];
   if (lvBc?.layoutUnrecognised) items.push('Business case layout not recognised');
-  else if (lvBc && failedChecks(runFinalChecks(lvBc.data)).length) items.push('Final Check failures');
+  else if (lvBc && failedChecks(runFinalChecks(lvBc.data, rules)).length) items.push('Final Check failures');
   return items;
 }
 
@@ -108,6 +111,7 @@ function TenderDetail() {
   // working roles see the tender and business case tabs instead.
   const isDrb = state.role === 'drb';
   const [tab, setTab] = useState(isDrb ? 'drb-summary' : 'pack');
+  const { requestLeave } = useLeaveGuard();
   useJobSim(t); // advances the simulated processing job while the tender is open
   const { failed } = docCounts(t);
   const attention = (t.outOfDate ? 1 : 0) + failed + (t.processFailed ? 1 : 0);
@@ -117,7 +121,7 @@ function TenderDetail() {
     <div className="tender-detail">
       <div className="page-head">
         <div className="detail-title-row">
-          <button className="back-link" onClick={() => dispatch({ type: 'close-tender' })}>
+          <button className="back-link" onClick={() => requestLeave(() => dispatch({ type: 'close-tender' }))}>
             <ArrowLeft size={14} aria-hidden /> All tenders
           </button>
           <div>
@@ -161,7 +165,7 @@ function TenderDetail() {
           { key: 'bc', label: `Business case${bcCount ? ` (v${bcCount})` : ''}` },
         ]}
         active={tab}
-        onChange={setTab}
+        onChange={(k) => requestLeave(() => setTab(k))}
         sticky
         stickyAtTop
       />
@@ -229,17 +233,25 @@ interface TenderForm {
 const emptyForm: TenderForm = { sfdcCrmId: '', ref: '', name: '', agency: '', type: 'Agency', closingDate: '' };
 
 function TenderFormFields({
-  form, setForm, duplicateOf,
+  form, setForm, duplicateOf, titleTakenBy,
 }: {
   form: TenderForm;
   setForm: React.Dispatch<React.SetStateAction<TenderForm>>;
   duplicateOf?: Tender;
+  titleTakenBy?: Tender;
 }) {
   const set = (k: keyof TenderForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((current) => ({ ...current, [k]: e.target.value }));
   return (
     <div className="hd-form create-tender-form">
-      <label>Title<span className="req" aria-hidden>*</span><input required autoFocus aria-required value={form.name} onChange={set('name')} /></label>
+      <label>Title<span className="req" aria-hidden>*</span>
+        <input required autoFocus aria-required aria-invalid={!!titleTakenBy} value={form.name} onChange={set('name')} />
+        {titleTakenBy && (
+          <span className="err small" role="alert">
+            A tender with this title already exists. Titles must be unique.
+          </span>
+        )}
+      </label>
       <label>Type<span className="req" aria-hidden>*</span>
         <select value={form.type} aria-required onChange={set('type')}>
           <option value="Agency">Agency</option><option value="Commercial">Commercial</option>
@@ -274,6 +286,12 @@ function TenderList() {
   const [deleteTender, setDeleteTender] = useState<Tender | null>(null);
   const [form, setForm] = useState<TenderForm>(emptyForm);
   const isBiddingManager = state.role === 'bidding-manager';
+  // Won TCV, needs attention and the money columns are for Finance and the DRB
+  const financials = canDo.viewFinancials(state.role);
+  const figuresOf = (t: Tender) => {
+    const v = latestParsedBc(t);
+    return v ? bcFigures(v.data) : undefined;
+  };
 
   const colAcc = {
     created: (t: Tender) => t.createdAt,
@@ -284,38 +302,52 @@ function TenderList() {
     type: (t: Tender) => t.type,
     status: (t: Tender) => t.status,
     statusReason: (t: Tender) => t.statusReason,
-    attention: (t: Tender) => attentionItems(t).length,
+    attention: (t: Tender) => attentionItems(t, state.rules).length,
+    tcv: (t: Tender) => figuresOf(t)?.tcv ?? -1,
+    indirect: (t: Tender) => figuresOf(t)?.indirect ?? -1,
+    direct: (t: Tender) => figuresOf(t)?.direct ?? -1,
+    ebitda: (t: Tender) => figuresOf(t)?.ebitda ?? -Infinity,
   };
   const rows = cf.apply(state.tenders, colAcc);
   const sorted = apply(rows, colAcc);
-  const pager = useAutoPager(sorted);
+  const pager = usePagedTable(sorted);
   const fcol = (k: keyof typeof colAcc) => ({
     filterValues: state.tenders.map((t) => String(colAcc[k](t))),
     filter: cf.filters[k],
     onFilter: (f: Parameters<typeof cf.set>[1]) => cf.set(k, f),
   });
+  // titles must be unique (case and spacing ignored)
+  const titleKey = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
+  const titleTakenBy = form.name.trim()
+    ? state.tenders.find((t) => titleKey(t.name) === titleKey(form.name) && t.id !== editTender?.id)
+    : undefined;
   const duplicateOf = form.ref.trim()
     ? state.tenders.find((t) => t.ref && t.ref.toLowerCase() === form.ref.trim().toLowerCase() && t.id !== editTender?.id)
     : undefined;
 
+  /** Always states the document count and business case version, prefixed
+   *  with the processing state when there is one worth knowing. */
   const subLine = (t: Tender) => {
-    if (t.archivedInfo) return `Archived · compressed ${t.archivedInfo.sizeFrom} to ${t.archivedInfo.sizeTo}`;
-    if (t.job) return 'Processing in progress';
-    if (t.processFailed) return 'Processing failed';
-    if (!t.lastProcessedAt) return t.pack.length ? `${t.pack.length} document${t.pack.length > 1 ? 's' : ''} uploaded, not processed` : 'No documents yet';
-    const bc = t.bcVersions.length ? ` · Business case v${t.bcVersions.length}` : ' · No business case yet';
-    return `${t.clauses.length} clauses extracted${bc}`;
+    const docs = t.pack.length ? `${t.pack.length} document${t.pack.length > 1 ? 's' : ''}` : 'No documents yet';
+    const latestBc = t.bcVersions[t.bcVersions.length - 1];
+    const bc = latestBc ? `Business case v${latestBc.v}` : 'No business case yet';
+    const state = t.archivedInfo ? 'Archived'
+      : t.job ? 'Processing in progress'
+        : t.processFailed ? 'Processing failed'
+          : t.pack.length && !t.lastProcessedAt ? 'Not processed'
+            : undefined;
+    return [state, docs, bc].filter(Boolean).join(' · ');
   };
 
   return (
     <div className="fill-page">
       <div className="filter-row">
-        <WonTcvCards />
+        {financials && <WonTcvCards />}
         <span style={{ marginLeft: 'auto' }}>
           {isBiddingManager && <Button variant="primary" icon={Plus} onClick={() => { setForm(emptyForm); setCreateOpen(true); }}>Create tender</Button>}
         </span>
       </div>
-      <div className="table-viewport" ref={pager.viewportRef}>
+      <div className="table-viewport">
         <table className="grid">
           <thead>
             <tr>
@@ -327,13 +359,22 @@ function TenderList() {
               <SortTh label="Type" k="type" sort={sort} onToggle={toggle} {...fcol('type')} />
               <SortTh label="Status" k="status" sort={sort} onToggle={toggle} {...fcol('status')} />
               <SortTh label="Status reason" k="statusReason" sort={sort} onToggle={toggle} {...fcol('statusReason')} />
-              <SortTh label="Needs attention" k="attention" sort={sort} onToggle={toggle} />
+              {financials && (
+                <>
+                  <SortTh label="TCV" k="tcv" sort={sort} onToggle={toggle} num />
+                  <SortTh label="Indirect cost" k="indirect" sort={sort} onToggle={toggle} num />
+                  <SortTh label="Direct cost" k="direct" sort={sort} onToggle={toggle} num />
+                  <SortTh label="EBITDA" k="ebitda" sort={sort} onToggle={toggle} num />
+                </>
+              )}
+              {!financials && <SortTh label="Needs attention" k="attention" sort={sort} onToggle={toggle} />}
               {isBiddingManager && <th aria-label="Actions" />}
             </tr>
           </thead>
           <tbody>
             {pager.slice.map((t) => {
-              const attn = attentionItems(t);
+              const attn = attentionItems(t, state.rules);
+              const fig = figuresOf(t);
               return (
                 <tr key={t.id} className="row-click" onClick={() => dispatch({ type: 'open-tender', id: t.id })}>
                   <td className="muted" style={{ whiteSpace: 'nowrap' }}>{dateShort(t.createdAt)}</td>
@@ -344,13 +385,21 @@ function TenderList() {
                   <td><span className={`badge ${t.type === 'Agency' ? 'pill-agency' : 'pill-commercial'}`}>{t.type}</span></td>
                   <td><StatusPill value={t.status} /></td>
                   <td><StatusPill value={t.statusReason} /></td>
-                  <td>
+                  {financials && (
+                    <>
+                      <td className="num">{fig ? money(fig.tcv) : '-'}</td>
+                      <td className="num">{fig ? money(fig.indirect) : '-'}</td>
+                      <td className="num">{fig ? money(fig.direct) : '-'}</td>
+                      <td className={`num ${fig && fig.ebitda < 0 ? 'neg' : ''}`}>{fig ? money(fig.ebitda) : '-'}</td>
+                    </>
+                  )}
+                  {!financials && <td>
                     {attn.length > 0 ? (
                       <span className="attn" title={attn.join('; ')}>
                         <AlertTriangle size={12} aria-hidden /> {attn[0]}{attn.length > 1 ? ` +${attn.length - 1}` : ''}
                       </span>
                     ) : <span className="attn attn-ok">-</span>}
-                  </td>
+                  </td>}
                   {isBiddingManager && (
                     <td className="table-actions" onClick={(event) => event.stopPropagation()}>
                       <IconButton label={`Edit ${t.name}`} icon={Pencil} onClick={() => {
@@ -363,7 +412,7 @@ function TenderList() {
                 </tr>
               );
             })}
-            {sorted.length === 0 && <tr><td colSpan={isBiddingManager ? 10 : 9} className="muted">No tenders match these filters. Clear the column filters to see all {state.tenders.length} tenders.</td></tr>}
+            {sorted.length === 0 && <tr><td colSpan={8 + (financials ? 4 : 1) + (isBiddingManager ? 1 : 0)} className="muted">No tenders match these filters. Clear the column filters to see all {state.tenders.length} tenders.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -373,7 +422,7 @@ function TenderList() {
         open={createOpen}
         title="Create tender"
         confirmLabel="Create tender"
-        confirmDisabled={!form.name.trim() || !form.agency.trim()}
+        confirmDisabled={!form.name.trim() || !form.agency.trim() || !!titleTakenBy}
         onClose={() => setCreateOpen(false)}
         onConfirm={() => {
           const id = `t-${Date.now()}`;
@@ -404,14 +453,14 @@ function TenderList() {
           setForm(emptyForm);
         }}
       >
-        <TenderFormFields form={form} setForm={setForm} duplicateOf={duplicateOf} />
+        <TenderFormFields form={form} setForm={setForm} duplicateOf={duplicateOf} titleTakenBy={titleTakenBy} />
       </ConfirmDialog>
 
       <ConfirmDialog
         open={Boolean(editTender)}
         title="Edit tender"
         confirmLabel="Save changes"
-        confirmDisabled={!form.name.trim() || !form.agency.trim()}
+        confirmDisabled={!form.name.trim() || !form.agency.trim() || !!titleTakenBy}
         onClose={() => setEditTender(null)}
         onConfirm={() => {
           if (!editTender) return;
@@ -430,7 +479,7 @@ function TenderList() {
           setEditTender(null);
         }}
       >
-        <TenderFormFields form={form} setForm={setForm} duplicateOf={duplicateOf} />
+        <TenderFormFields form={form} setForm={setForm} duplicateOf={duplicateOf} titleTakenBy={titleTakenBy} />
       </ConfirmDialog>
 
       <ConfirmDialog

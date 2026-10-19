@@ -1,26 +1,61 @@
 // TendrAI shell: top bar with navigation and the user menu, scrolling main
 // content - same layout and design system as the companion app.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Moon, Sun } from 'lucide-react';
 import { StoreProvider, useStore } from './state/store';
-import { ToastProvider } from './ui/toast';
+import { LeaveGuardProvider, useLeaveGuard } from './lib/leaveGuard';
+import { ToastProvider, useToast } from './ui/toast';
 import LoginPage from './pages/LoginPage';
 import TendersPage from './pages/TendersPage';
 import TemplatesPage from './pages/TemplatesPage';
 import RepositoryPage from './pages/RepositoryPage';
+import AuditPage from './pages/AuditPage';
+import RulesPage from './pages/RulesPage';
 import { CitationProvider } from './ui/citation';
 
 const NAV = [
   { key: 'tenders', label: 'Tenders' },
   { key: 'templates', label: 'Templates' },
+  { key: 'rules', label: 'Business case management' },
   { key: 'historical', label: 'Historical data' },
+  { key: 'audit', label: 'Audit log' },
 ];
+
+/** Audited actions whose screens don't already confirm them with their own
+ *  toast. Every user action ends in visible feedback either way. */
+const CONFIRM_FROM_AUDIT = new Set([
+  'Clause updated',
+  'Template selected',
+  'Tender created',
+  'Tender details edited',
+  'Tender deleted',
+  'Document reordered',
+  'File downloaded',
+  'MSPO row count changed',
+  'Certificate linked',
+  'MSPO mapping reset to default',
+]);
+
+function AuditToaster() {
+  const { state } = useStore();
+  const toast = useToast();
+  const seen = useRef(state.audit.length);
+  useEffect(() => {
+    const fresh = state.audit.slice(seen.current);
+    seen.current = state.audit.length;
+    for (const e of fresh) {
+      if (CONFIRM_FROM_AUDIT.has(e.action)) toast.push('success', e.action, e.detail);
+    }
+  }, [state.audit, toast]);
+  return null;
+}
 
 function Shell() {
   const { state, dispatch } = useStore();
   const [page, setPage] = useState('tenders');
   const [menuOpen, setMenuOpen] = useState(false);
+  const { requestLeave } = useLeaveGuard();
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     try {
       return localStorage.getItem('tendrai-theme') === 'dark' ? 'dark' : 'light';
@@ -37,16 +72,22 @@ function Shell() {
     }
   }, [theme]);
 
+  // pages can ask the shell to switch (View history, uploads from a tender, Back to tender)
+  const navN = state.nav?.n;
+  useEffect(() => { if (state.nav) setPage(state.nav.page); }, [navN]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!state.user) return <LoginPage />;
   const user = state.user;
   const initials = user.name.split(' ').map((p) => p[0]).slice(0, 2).join('');
   const navigate = (nextPage: string) => {
     setPage(nextPage);
+    dispatch({ type: 'clear-return' });
     if (nextPage !== 'tenders') dispatch({ type: 'close-tender' });
   };
 
   return (
     <div className="app">
+      <AuditToaster />
       <header className="topbar">
         <div className="brand">
           <img src="/lps-logo-horizontal.png" alt="LPS - a Lenovo company" className="brand-logo" />
@@ -56,7 +97,7 @@ function Shell() {
             <button
               key={n.key}
               className={page === n.key ? 'active' : ''}
-              onClick={() => navigate(n.key)}
+              onClick={() => requestLeave(() => navigate(n.key))}
             >
               {n.label}
             </button>
@@ -83,7 +124,7 @@ function Shell() {
                 <div className="muted small">{user.email}</div>
                 <div className="muted small">{user.roleLabel}</div>
               </div>
-              <button onClick={() => { setMenuOpen(false); setPage('tenders'); dispatch({ type: 'logout' }); }}>
+              <button onClick={() => { setMenuOpen(false); requestLeave(() => { setPage('tenders'); dispatch({ type: 'logout' }); }); }}>
                 Sign out
               </button>
             </div>
@@ -102,6 +143,8 @@ function Shell() {
         {page === 'tenders' && <TendersPage />}
         {page === 'templates' && <TemplatesPage />}
         {page === 'historical' && <RepositoryPage />}
+        {page === 'rules' && <RulesPage />}
+        {page === 'audit' && <AuditPage />}
       </main>
       <footer className="footer muted small">© 2026 Lenovo PCCW Solutions</footer>
     </div>
@@ -113,7 +156,9 @@ export default function App() {
     <StoreProvider>
       <ToastProvider>
         <CitationProvider>
-          <Shell />
+          <LeaveGuardProvider>
+            <Shell />
+          </LeaveGuardProvider>
         </CitationProvider>
       </ToastProvider>
     </StoreProvider>

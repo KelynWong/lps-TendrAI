@@ -2,7 +2,7 @@
 // one product family: sortable headers with Excel-style column filters,
 // pagination, editable cells - plus v2's review/status badges.
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import {
@@ -222,67 +222,32 @@ export function usePager<T>(items: T[], pageSize = 10) {
   };
 }
 
-/** Auto-sizing pager for the fixed-height list pages (Tenders, Repository):
- *  rows per page are computed from the available height via a ResizeObserver,
- *  so the page itself never shows a vertical scrollbar. When the page size
- *  changes after a resize, the user stays on the same first record, not the
- *  same page number. Attach `viewportRef` to the element wrapping the table. */
-export function useAutoPager<T>(items: T[], { min = 5, max = 50 } = {}) {
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const [pageSize, setPageSize] = useState(10);
+export const PAGE_SIZES = [10, 20, 50, 100];
+
+/** Pager for the list pages (Tenders, Historical data, Audit log): the user
+ *  picks the rows per page; changing it keeps them on the same first record,
+ *  not the same page number. The table scrolls inside its own area. */
+export function usePagedTable<T>(items: T[], initialSize = 20) {
+  const [pageSize, setSize] = useState(initialSize);
   const [page, setPage] = useState(0);
-  // index of the first visible record - preserved across page-size changes
-  const anchor = useRef(0);
-  // container height at the last measurement; growth is only allowed when the
-  // container itself changed, so varying row heights cannot oscillate the size
-  const lastHeight = useRef(0);
-
-  // re-measure on every render (cheap; setState with same value no-ops) and on
-  // container resizes - rows can be different heights (sub-lines, banners)
-  useLayoutEffect(() => {
-    const el = viewportRef.current;
-    if (!el) return;
-    const measure = () => {
-      const thead = el.querySelector('thead');
-      // ignore expanded detail rows (nested tables) when sizing ordinary rows
-      const heights = Array.from(el.querySelectorAll('tbody tr'))
-        .map((r) => r.getBoundingClientRect().height)
-        .filter((h) => h > 0 && h < 120);
-      const rowH = Math.max(37, ...heights);
-      const headH = thead ? thead.getBoundingClientRect().height : 37;
-      const avail = el.clientHeight - headH - 2; // table borders
-      const fit = Math.min(max, Math.max(min, Math.floor(avail / rowH)));
-      const containerChanged = el.clientHeight !== lastHeight.current;
-      lastHeight.current = el.clientHeight;
-      setPageSize((cur) => {
-        const next = containerChanged ? fit : Math.min(cur, fit);
-        if (next !== cur) setPage(Math.floor(anchor.current / next));
-        return next;
-      });
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  });
-
   const pages = Math.max(1, Math.ceil(items.length / pageSize));
   const cur = Math.min(page, pages - 1);
   const slice = items.slice(cur * pageSize, cur * pageSize + pageSize);
-  const goTo = (p: number) => {
-    const next = Math.max(0, Math.min(p, pages - 1));
-    anchor.current = next * pageSize;
-    setPage(next);
+  const setPageSize = (n: number) => {
+    const firstRecord = cur * pageSize;
+    setSize(n);
+    setPage(Math.floor(firstRecord / n));
   };
   return {
-    viewportRef,
     slice,
     cur,
     pages,
     total: items.length,
     from: items.length ? cur * pageSize + 1 : 0,
     to: cur * pageSize + slice.length,
-    setPage: goTo,
+    setPage: (p: number) => setPage(Math.max(0, Math.min(p, pages - 1))),
+    pageSize,
+    setPageSize,
   };
 }
 
@@ -293,6 +258,8 @@ export function Pager({
   to,
   total,
   setPage,
+  pageSize,
+  setPageSize,
 }: {
   cur: number;
   pages: number;
@@ -300,9 +267,19 @@ export function Pager({
   to: number;
   total: number;
   setPage: (p: number) => void;
+  pageSize?: number;
+  setPageSize?: (n: number) => void;
 }) {
   return (
     <div className="pager">
+      {pageSize !== undefined && setPageSize && (
+        <label className="pager-size muted small">
+          Rows per page
+          <select value={pageSize} aria-label="Rows per page" onChange={(e) => setPageSize(+e.target.value)}>
+            {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </label>
+      )}
       <button className="btn btn-compact" aria-label="First page" title="First page" disabled={cur === 0} onClick={() => setPage(0)}><ChevronsLeft size={16} aria-hidden /></button>
       <button className="btn btn-compact" aria-label="Previous page" title="Previous page" disabled={cur === 0} onClick={() => setPage(cur - 1)}><ChevronLeft size={16} aria-hidden /></button>
       <span className="pager-page">Page {cur + 1} of {pages}</span>
@@ -312,6 +289,7 @@ export function Pager({
     </div>
   );
 }
+
 
 // ---- Editable cells --------------------------------------------------------
 
