@@ -21,10 +21,10 @@ import type {
 } from '../types';
 import { PROCESS_STAGES } from '../types';
 import type { Role, UserInfo } from '../config';
-import { AUDIT, BACKUP, BOILERPLATE, REPOSITORY, TEMPLATES, TENDERS } from '../data/mock';
+import { AUDIT, BACKUP, BOILERPLATE, BOILERPLATE_TAGS, REPOSITORY, TEMPLATES, TENDERS } from '../data/mock';
 import { buildDemoExtraction } from '../data/extraction';
 import { DEFAULT_RULES, type RuleDef } from '../rules/finalChecks';
-import { DEFAULT_MSPO_MAPPING, type FieldMapEntry, type MspoDefaults, type MspoPlan } from '../mspo/mapping';
+import { DEFAULT_MSPO_MAPPING, type FieldMapEntry, type MapGroup, type MspoDefaults, type MspoPlan } from '../mspo/mapping';
 
 export interface AppState {
   user: UserInfo | null; // null = not signed in
@@ -33,6 +33,8 @@ export interface AppState {
   tenders: Tender[];
   templates: TemplateDoc[];
   boilerplate: Boilerplate[];
+  /** tags offered for boilerplate; grows as users create tags */
+  boilerplateTags: string[];
   repository: RepoRecord[];
   backup: typeof BACKUP & { lastRestoreDemo?: string };
   audit: AuditEntry[];
@@ -70,7 +72,7 @@ export type Action =
   | { type: 'log'; event: LogEvent }
   | { type: 'upsert-rule'; rule: RuleDef }
   | { type: 'delete-rule'; id: string }
-  | { type: 'set-mspo-defaults'; plan: MspoPlan; entries: FieldMapEntry[] }
+  | { type: 'set-mspo-defaults'; plan: MapGroup; entries: FieldMapEntry[] }
   | { type: 'set-mspo-rows'; tenderId: string; plan: MspoPlan; rows?: number }
   | { type: 'set-mspo-meta'; tenderId: string; quoteLine?: string; fyCount?: number; daysPerMonth?: number }
   | { type: 'open-audit'; tender?: string; section?: string; returnTo?: ReturnTarget }
@@ -130,6 +132,22 @@ export type Action =
 function patchTender(state: AppState, id: string, fn: (t: Tender) => Tender): AppState {
   return { ...state, tenders: state.tenders.map((t) => (t.id === id ? fn(t) : t)) };
 }
+
+/** Tags not yet on the boilerplate tag list (case-insensitive). */
+const newTags = (state: AppState, tags?: string[]) =>
+  (tags ?? []).filter((t) => !state.boilerplateTags.some((x) => x.toLowerCase() === t.toLowerCase()));
+
+/** Adds any tags a user created to the shared list. */
+function withTags(state: AppState, tags?: string[]): AppState {
+  const added = newTags(state, tags);
+  return added.length ? { ...state, boilerplateTags: [...state.boilerplateTags, ...added].sort((x, y) => x.localeCompare(y)) } : state;
+}
+
+/** Audit suffix naming tags this change adds to the list. */
+const tagNote = (state: AppState, tags?: string[]) => {
+  const added = newTags(state, tags);
+  return added.length ? ` (new tag${added.length > 1 ? 's' : ''} added to the list: ${added.join(', ')})` : '';
+};
 
 /** Plausible page count once text extraction has run (deterministic per name). */
 const pagesFor = (name: string) =>
@@ -427,14 +445,14 @@ function reducer(state: AppState, a: Action): AppState {
     }
     case 'upload-boilerplate': {
       const old = a.replaceId ? state.boilerplate.find((x) => x.id === a.replaceId) : undefined;
-      if (!old) return { ...state, boilerplate: [a.item, ...state.boilerplate] };
+      if (!old) return withTags({ ...state, boilerplate: [a.item, ...state.boilerplate] }, a.item.tags);
       const next: Boilerplate = {
         ...old,
         ...a.item,
         id: old.id,
         history: [{ version: old.version, updated: old.updated, uploadedBy: old.uploadedBy }, ...(old.history ?? [])],
       };
-      return { ...state, boilerplate: state.boilerplate.map((x) => (x.id === old.id ? next : x)) };
+      return withTags({ ...state, boilerplate: state.boilerplate.map((x) => (x.id === old.id ? next : x)) }, a.item.tags);
     }
     case 'add-template':
       return { ...state, templates: [a.tpl, ...state.templates] };
@@ -443,9 +461,9 @@ function reducer(state: AppState, a: Action): AppState {
     case 'delete-template':
       return { ...state, templates: state.templates.filter((x) => x.id !== a.id) };
     case 'add-boilerplate':
-      return { ...state, boilerplate: [a.item, ...state.boilerplate] };
+      return withTags({ ...state, boilerplate: [a.item, ...state.boilerplate] }, a.item.tags);
     case 'update-boilerplate':
-      return { ...state, boilerplate: state.boilerplate.map((x) => (x.id === a.id ? { ...x, ...a.patch } : x)) };
+      return withTags({ ...state, boilerplate: state.boilerplate.map((x) => (x.id === a.id ? { ...x, ...a.patch } : x)) }, a.patch.tags);
     case 'delete-boilerplate':
       return { ...state, boilerplate: state.boilerplate.filter((x) => x.id !== a.id) };
     case 'archive-repo':
@@ -489,6 +507,12 @@ let auditSeq = 0;
 
 type Described = Omit<AuditEntry, 'id' | 'ts' | 'user' | 'role'> & { system?: boolean };
 
+/** "product:Category" -> "product plan: Category" */
+const mapKeyLabel = (key: string) => {
+  const [group, target] = key.split(/:(.*)/);
+  return `${group === 'figures' ? 'Business case figures' : `${group} plan`}: ${target}`;
+};
+
 function describe(prev: AppState, a: Action, next: AppState): Described | null {
   const tenderOf = (id?: string) => (id ? prev.tenders.find((t) => t.id === id) ?? next.tenders.find((t) => t.id === id) : undefined);
   const refOf = (id?: string) => {
@@ -518,7 +542,7 @@ function describe(prev: AppState, a: Action, next: AppState): Described | null {
     case 'delete-rule':
       return { action: 'Rule deleted', detail: prev.rules.find((r) => r.id === a.id)?.name ?? '', section: 'Business case management' };
     case 'set-mspo-defaults':
-      return { action: 'MSPO default mapping changed', detail: `${a.plan} plan`, section: 'Business case management' };
+      return { action: 'MSPO default mapping changed', detail: a.plan === 'figures' ? 'Business case figures' : `${a.plan} plan`, section: 'Business case management' };
     case 'set-mspo-rows':
       return { action: 'MSPO row count changed', detail: `${a.plan} plan: ${a.rows ?? 'default'} rows`, tender: refOf(a.tenderId), section: 'MSPO templates' };
     case 'set-mspo-details':
@@ -530,7 +554,7 @@ function describe(prev: AppState, a: Action, next: AppState): Described | null {
           ? { action: 'MSPO man-days per month changed', detail: `${a.daysPerMonth ?? 'default'} man-days per month`, tender: refOf(a.tenderId), section: 'MSPO templates' }
           : { action: 'MSPO fiscal years changed', detail: `${a.fyCount ?? 'default'} fiscal year(s)`, tender: refOf(a.tenderId), section: 'MSPO templates' };
     case 'reset-mspo-mapping':
-      return { action: 'MSPO mapping reset to default', detail: a.key ? a.key.replace(':', ' plan: ') : 'All plans', tender: refOf(a.tenderId), section: 'MSPO templates' };
+      return { action: 'MSPO mapping reset to default', detail: a.key ? mapKeyLabel(a.key) : 'All plans', tender: refOf(a.tenderId), section: 'MSPO templates' };
     case 'logout':
       return { action: 'Signed out', detail: prev.user?.email ?? '' };
     case 'create-tender':
@@ -612,19 +636,19 @@ function describe(prev: AppState, a: Action, next: AppState): Described | null {
     case 'delete-bc-version':
       return { action: 'Business case version deleted', detail: `v${a.v}`, tender: refOf(a.tenderId), section: 'Business case' };
     case 'set-mspo-mapping':
-      return { action: 'MSPO mapping changed', detail: `${a.key.replace(':', ' plan: ')} <- ${a.tab} ${a.from}${a.to ? `:${a.to}` : ''}`, tender: refOf(a.tenderId), section: 'MSPO templates' };
+      return { action: 'MSPO mapping changed', detail: `${mapKeyLabel(a.key)} <- ${a.tab} ${a.from}${a.to ? `:${a.to}` : ''}`, tender: refOf(a.tenderId), section: 'MSPO templates' };
     case 'upload-template':
       return { action: a.replaceId ? 'Template replaced' : 'Template uploaded', detail: `${a.tpl.name} v${a.tpl.version} (${a.tpl.agency}, ${a.tpl.type})`, section: 'Templates' };
     case 'upload-boilerplate': {
       const kind = a.item.type === 'Certification' ? 'Certification' : 'Boilerplate';
-      return { action: `${kind} ${a.replaceId ? 'replaced' : 'uploaded'}`, detail: `${a.item.name} v${a.item.version}`, section: 'Templates' };
+      return { action: `${kind} ${a.replaceId ? 'replaced' : 'uploaded'}`, detail: `${a.item.name} v${a.item.version}${tagNote(prev, a.item.tags)}`, section: 'Templates' };
     }
     case 'update-template':
       return { action: 'Template edited', detail: prev.templates.find((x) => x.id === a.id)?.name ?? '', section: 'Templates' };
     case 'delete-template':
       return { action: 'Template deleted', detail: prev.templates.find((x) => x.id === a.id)?.name ?? '', section: 'Templates' };
     case 'update-boilerplate':
-      return { action: 'Boilerplate edited', detail: prev.boilerplate.find((x) => x.id === a.id)?.name ?? '', section: 'Templates' };
+      return { action: 'Boilerplate edited', detail: `${prev.boilerplate.find((x) => x.id === a.id)?.name ?? ''}${tagNote(prev, a.patch.tags)}`, section: 'Templates' };
     case 'delete-boilerplate':
       return { action: 'Boilerplate deleted', detail: prev.boilerplate.find((x) => x.id === a.id)?.name ?? '', section: 'Templates' };
     case 'archive-repo':
@@ -658,6 +682,7 @@ const initial: AppState = {
   tenders: TENDERS,
   templates: TEMPLATES,
   boilerplate: BOILERPLATE,
+  boilerplateTags: BOILERPLATE_TAGS,
   repository: REPOSITORY,
   backup: BACKUP,
   audit: AUDIT,

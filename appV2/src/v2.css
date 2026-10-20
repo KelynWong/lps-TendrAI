@@ -227,6 +227,7 @@ main:has(> .fill-page) { overflow: hidden; padding-bottom: var(--sp-2); display:
 
 /* Templates page: space between the upload button row and the table */
 .back-row { margin: 0 0 var(--sp-3); }
+.tag-list { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 .audit-filters .btn { align-self: flex-end; }
 .lib-heading { margin: var(--sp-3) 0 var(--sp-3); }
 .mspo-preview-head { font-size: var(--fs-h3); font-weight: 600; margin: var(--sp-4) 0 var(--sp-2); }
@@ -235,3 +236,27 @@ main:has(> .fill-page) { overflow: hidden; padding-bottom: var(--sp-2); display:
 /* Clauses: edited but not yet saved */
 select.cell-changed { border-color: var(--warning); background: var(--warning-tint); }
 td.cell-changed-td { background: var(--warning-tint); }
+
+.failed-checks { margin: 4px 0 0; padding-left: 18px; }
+.failed-checks li { margin: 2px 0; }
+
+/* Boilerplate tag picker: chips plus a type-ahead, spanning the form row */
+.tag-field { grid-column: 1 / -1; font-size: var(--fs-label); color: var(--ink-secondary); font-weight: 600; }
+.tag-field > label { display: block; }
+.tag-picker {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 4px; padding: 4px 6px; min-height: 34px; box-sizing: border-box;
+  border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); cursor: text;
+}
+.tag-picker:focus-within { outline: 2px solid var(--focus, var(--info)); outline-offset: 1px; }
+.hd-form .tag-picker input, .tag-picker input {
+  flex: 1; min-width: 140px; width: auto; margin: 0; padding: 3px 2px; border: 0; outline: 0; background: transparent;
+}
+.tag-chip button { display: inline-flex; padding: 0; margin-left: 2px; border: 0; background: none; color: inherit; cursor: pointer; }
+.tag-menu {
+  list-style: none; margin: 4px 0 0; padding: 4px 0; max-height: 180px; overflow-y: auto;
+  border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); font-weight: 400; color: var(--ink);
+}
+.tag-menu li { display: flex; align-items: center; gap: 4px; padding: 5px 10px; cursor: pointer; }
+.tag-menu li.active { background: var(--info-tint); }
+/* two equal columns (e.g. boilerplate upload: name | version) */
+.hd-form.hd-form-halves { grid-template-columns: 1fr 1fr; }

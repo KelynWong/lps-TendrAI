@@ -32,13 +32,13 @@ export default function LoginPage() {
           </div>
           <h1>{APP_NAME}</h1>
           <p>
-            From tender pack to Deal Review Board - the business case validated, versioned and
-            MSPO-ready, with the tender requirements read for you.
+            Turn tender documents into a review-ready business case faster - with requirements
+            extracted, each version checked, and MSPO plans ready to download.
           </p>
           <ul className="login-points">
-            <li><Check size={14} aria-hidden />Upload each business case version and run the Final Check automatically</li>
-            <li><Check size={14} aria-hidden />Submission checklist, clauses and compliance table extracted from the tender pack</li>
-            <li><Check size={14} aria-hidden />MSPO product and resource plan templates filled in one click</li>
+            <li><Check size={14} aria-hidden />Upload each business case version and run Final Checks to catch reconciliation, billing and cash-flow issues before review</li>
+            <li><Check size={14} aria-hidden />Process the tender pack once to extract submission requirements, qualification criteria and clauses with source citations for faster verification</li>
+            <li><Check size={14} aria-hidden />Generate pre-filled MSPO product, resource and billing plans from the business case, reducing manual re-keying</li>
           </ul>
         </div>
       </div>

@@ -169,6 +169,7 @@ export default function RepositoryPage() {
                     <tr className="expand-row">
                       <td />
                       <td colSpan={8}>
+                        {locked && <div className="muted small" style={{ margin: '4px 0' }}>{lockTitle}.</div>}
                         <div className="two-col">
                           <div>
                             <div className="muted small" style={{ margin: '4px 0' }}>Stored documents:</div>
@@ -178,7 +179,7 @@ export default function RepositoryPage() {
                                   <tr key={name}>
                                     <td><FileText size={13} aria-hidden style={{ verticalAlign: '-2px' }} /> {name}</td>
                                     <td className="table-actions" style={{ width: 48 }}>
-                                      <IconButton label={locked ? lockTitle : `Download ${name}`} icon={Download} disabled={locked} onClick={() => downloadFile(r, name)} />
+                                      {!locked && <IconButton label={`Download ${name}`} icon={Download} onClick={() => downloadFile(r, name)} />}
                                     </td>
                                   </tr>
                                 ))}
@@ -197,7 +198,7 @@ export default function RepositoryPage() {
                                     <td className="muted">{dateShort(v.date)} · {v.by}</td>
                                     <td>{v.note}</td>
                                     <td className="table-actions" style={{ width: 48 }}>
-                                      <IconButton label={locked ? lockTitle : `Download v${v.v}`} icon={Download} disabled={locked} onClick={() => downloadFile(r, `${r.name}_v${v.v}`)} />
+                                      {!locked && <IconButton label={`Download v${v.v}`} icon={Download} onClick={() => downloadFile(r, `${r.name}_v${v.v}`)} />}
                                     </td>
                                   </tr>
                                 ))}

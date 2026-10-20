@@ -6,12 +6,12 @@
 
 import { Fragment, useState } from 'react';
 import type { ReactNode } from 'react';
-import { AlertTriangle, ChevronDown, ChevronRight, Eye, Pencil, Trash2 } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Download, Eye, Pencil, Trash2 } from 'lucide-react';
 import { canDo } from '../config';
 import { dateShort } from '../lib/format';
 import { useStore } from '../state/store';
 import { SortTh, useColFilters, useSort } from '../components/common';
-import { LibraryUpload } from '../components/library';
+import { LibraryUpload, TagPicker, certProblems } from '../components/library';
 import { BackToTender } from '../components/backToTender';
 import { ConfirmDialog, IconButton, TabsBar } from '../ui/ui';
 import { useToast } from '../ui/toast';
@@ -39,7 +39,9 @@ export default function TemplatesPage() {
   // under a long template list
   // uploads from a tender land on the matching sub tab
   const [libTab, setLibTab] = useState(() => (state.nav?.page === 'templates' && state.nav.sub ? state.nav.sub : 'templates'));
-  const [editForm, setEditForm] = useState({ name: '', version: '', expires: '' });
+  const [editForm, setEditForm] = useState({ name: '', version: '', expires: '', issuer: '', certNumber: '', issued: '', tags: [] as string[] });
+  const editingCert = editing?.kind === 'boilerplate' && editing.item.type === 'Certification';
+  const editProblems = [...(editForm.name.trim() ? [] : ['name']), ...(editingCert ? certProblems(editForm) : [])];
 
   const accessors = {
     name: (t: TemplateDoc) => t.name,
@@ -92,11 +94,26 @@ export default function TemplatesPage() {
     excerpt: '',
   });
 
+  /** Downloads one version of a library item (the demo serves a sample file). */
+  const downloadVersion = (target: EditTarget, version: string) => {
+    const isCert = target.kind === 'boilerplate' && target.item.type === 'Certification';
+    const isSheet = target.kind === 'template' && target.item.type === 'Compliance table';
+    const a = document.createElement('a');
+    a.href = isCert ? '/mock-documents/certificate-demo.pdf' : isSheet ? '/mock-documents/MHA_business_case_demo.xlsm' : '/mock-documents/supplier-response.docx';
+    a.download = `${target.item.name.replace(/\W+/g, '_').replace(/_+$/, '')}_v${version}.${isCert ? 'pdf' : isSheet ? 'xlsm' : 'docx'}`;
+    a.click();
+    dispatch({ type: 'log', event: { action: 'File downloaded', detail: `${target.item.name} v${version}`, section: 'Templates' } });
+  };
+
   const openEdit = (target: EditTarget) => {
     setEditForm({
       name: target.item.name,
       version: target.item.version,
       expires: target.kind === 'boilerplate' ? (target.item.expires ?? '') : '',
+      issuer: target.kind === 'boilerplate' ? (target.item.issuer ?? '') : '',
+      certNumber: target.kind === 'boilerplate' ? (target.item.certNumber ?? '') : '',
+      issued: target.kind === 'boilerplate' ? (target.item.issued ?? '') : '',
+      tags: target.kind === 'boilerplate' ? (target.item.tags ?? []) : [],
     });
     setEditing(target);
   };
@@ -109,7 +126,13 @@ export default function TemplatesPage() {
       dispatch({
         type: 'update-boilerplate',
         id: editing.item.id,
-        patch: { name: editForm.name.trim(), version: editForm.version.trim(), expires: editForm.expires || undefined, updated: today },
+        patch: editing.item.type === 'Certification'
+          ? {
+            name: editForm.name.trim(), version: editForm.version.trim(), updated: today,
+            expires: editForm.expires, issuer: editForm.issuer.trim(),
+            certNumber: editForm.certNumber.trim(), issued: editForm.issued,
+          }
+          : { name: editForm.name.trim(), version: editForm.version.trim(), updated: today, tags: editForm.tags.length ? editForm.tags : undefined },
       });
     }
     toast.push('success', 'Changes saved', `${editForm.name} updated.`);
@@ -151,7 +174,7 @@ export default function TemplatesPage() {
   );
 
   /** Version history rows shown under an expanded item. */
-  const historyRow = (id: string, colSpan: number, current: { version: string; updated: string; uploadedBy: string }, history?: LibraryVersion[]) =>
+  const historyRow = (id: string, colSpan: number, target: EditTarget, history?: LibraryVersion[]) =>
     expanded.has(id) && history?.length ? (
       <tr className="expand-row">
         <td />
@@ -162,13 +185,19 @@ export default function TemplatesPage() {
           <table className="grid narrow">
             <tbody>
               <tr>
-                <td style={{ whiteSpace: 'nowrap' }}><b>v{current.version}</b> <span className="badge badge-human">Latest</span></td>
-                <td className="muted">{dateShort(current.updated)} · {current.uploadedBy}</td>
+                <td style={{ whiteSpace: 'nowrap' }}><b>v{target.item.version}</b> <span className="badge badge-human">Latest</span></td>
+                <td className="muted">{dateShort(target.item.updated)} · {target.item.uploadedBy}</td>
+                <td className="table-actions" style={{ width: 48 }}>
+                  <IconButton label={`Download v${target.item.version}`} icon={Download} onClick={() => downloadVersion(target, target.item.version)} />
+                </td>
               </tr>
               {history.map((h) => (
                 <tr key={h.version}>
                   <td className="mono">v{h.version}</td>
                   <td className="muted">{dateShort(h.updated)} · {h.uploadedBy}</td>
+                  <td className="table-actions" style={{ width: 48 }}>
+                    <IconButton label={`Download v${h.version}`} icon={Download} onClick={() => downloadVersion(target, h.version)} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -180,6 +209,7 @@ export default function TemplatesPage() {
   const rowActions = (target: EditTarget, onPreview: () => void) => (
     <td className="table-actions" style={{ whiteSpace: 'nowrap' }}>
       <IconButton label={`Preview ${target.item.name}`} icon={Eye} onClick={onPreview} />
+      <IconButton label={`Download ${target.item.name} v${target.item.version}`} icon={Download} onClick={() => downloadVersion(target, target.item.version)} />
       {editable && <IconButton label={`Edit ${target.item.name}`} icon={Pencil} onClick={() => openEdit(target)} />}
       {editable && <IconButton label={`Delete ${target.item.name}`} icon={Trash2} danger onClick={() => setDeleting(target)} />}
     </td>
@@ -206,7 +236,7 @@ export default function TemplatesPage() {
         tabs={[
           { key: 'templates', label: 'Templates' },
           { key: 'certs', label: 'Certifications', badge: expiredCount, badgeTitle: `${expiredCount} certification(s) expired` },
-          { key: 'boilerplate', label: 'Company boilerplate' },
+          { key: 'boilerplate', label: 'Boilerplate' },
         ]}
         active={libTab}
         onChange={setLibTab}
@@ -241,7 +271,7 @@ export default function TemplatesPage() {
                     <td className="muted">{dateShort(t.updated)}</td>
                     {rowActions({ kind: 'template', item: t }, () => previewTemplate(t))}
                   </tr>
-                  {historyRow(t.id, 8, t, t.history)}
+                  {historyRow(t.id, 8, { kind: 'template', item: t }, t.history)}
                 </Fragment>
               ))}
             </tbody>
@@ -261,20 +291,23 @@ export default function TemplatesPage() {
             ) : undefined,
           )}
           <table className="grid">
-            <thead><tr><th aria-label="Expand" /><th>Certificate</th><th>Version</th><th>Expiry</th><th>Uploaded by</th><th>Last updated</th><th aria-label="Actions" /></tr></thead>
+            <thead><tr><th aria-label="Expand" /><th>Certificate</th><th>Issuing body</th><th>Certificate number</th><th>Issue date</th><th>Expiry</th><th>Version</th><th>Uploaded by</th><th>Last updated</th><th aria-label="Actions" /></tr></thead>
             <tbody>
               {certs.map((b) => (
                 <Fragment key={b.id}>
                   <tr>
                     {expandCell(b.id, b.name, b.history)}
                     <td><b>{b.name}</b></td>
+                    <td>{b.issuer ?? <span className="muted">-</span>}</td>
+                    <td className="mono small">{b.certNumber ?? <span className="muted">-</span>}</td>
+                    <td className="muted" style={{ whiteSpace: 'nowrap' }}>{b.issued ? dateShort(b.issued) : '-'}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>{expiryCell(b.expires)}</td>
                     <td className="mono">v{b.version}</td>
-                    <td>{expiryCell(b.expires)}</td>
                     <td className="muted">{b.uploadedBy}</td>
                     <td className="muted" style={{ whiteSpace: 'nowrap' }}>{dateShort(b.updated)}</td>
                     {rowActions({ kind: 'boilerplate', item: b }, () => previewBoilerplate(b))}
                   </tr>
-                  {historyRow(b.id, 7, b, b.history)}
+                  {historyRow(b.id, 10, { kind: 'boilerplate', item: b }, b.history)}
                 </Fragment>
               ))}
             </tbody>
@@ -286,19 +319,24 @@ export default function TemplatesPage() {
         <section>
           {heading('', <LibraryUpload kind="boilerplate" />)}
           <table className="grid">
-            <thead><tr><th aria-label="Expand" /><th>Item</th><th>Version</th><th>Uploaded by</th><th>Last updated</th><th aria-label="Actions" /></tr></thead>
+            <thead><tr><th aria-label="Expand" /><th>Item</th><th>Tags</th><th>Version</th><th>Uploaded by</th><th>Last updated</th><th aria-label="Actions" /></tr></thead>
             <tbody>
               {backgrounds.map((b) => (
                 <Fragment key={b.id}>
                   <tr>
                     {expandCell(b.id, b.name, b.history)}
                     <td><b>{b.name}</b></td>
+                    <td>
+                      {b.tags?.length
+                        ? <span className="tag-list">{b.tags.map((tag) => <span key={tag} className="badge badge-neutral">{tag}</span>)}</span>
+                        : <span className="muted">-</span>}
+                    </td>
                     <td className="mono">v{b.version}</td>
                     <td className="muted">{b.uploadedBy}</td>
                     <td className="muted" style={{ whiteSpace: 'nowrap' }}>{dateShort(b.updated)}</td>
                     {rowActions({ kind: 'boilerplate', item: b }, () => previewBoilerplate(b))}
                   </tr>
-                  {historyRow(b.id, 6, b, b.history)}
+                  {historyRow(b.id, 7, { kind: 'boilerplate', item: b }, b.history)}
                 </Fragment>
               ))}
             </tbody>
@@ -310,17 +348,26 @@ export default function TemplatesPage() {
         open={!!editing}
         title={`Edit ${editing?.item.name ?? ''}`}
         confirmLabel="Save changes"
-        confirmDisabled={!editForm.name.trim()}
+        confirmDisabled={editProblems.length > 0}
         onClose={() => setEditing(null)}
         onConfirm={commitEdit}
       >
         <div className="hd-form">
           <label>Name<span className="req" aria-hidden>*</span><input value={editForm.name} autoFocus onChange={(e) => setEditForm((c) => ({ ...c, name: e.target.value }))} /></label>
           <label>Version<input value={editForm.version} onChange={(e) => setEditForm((c) => ({ ...c, version: e.target.value }))} /></label>
-          {editing?.kind === 'boilerplate' && editing.item.type === 'Certification' && (
-            <label>Expiry date<input type="date" value={editForm.expires} onChange={(e) => setEditForm((c) => ({ ...c, expires: e.target.value }))} /></label>
+          {editingCert && (
+            <>
+              <label>Issuing body<span className="req" aria-hidden>*</span><input aria-required value={editForm.issuer} onChange={(e) => setEditForm((c) => ({ ...c, issuer: e.target.value }))} /></label>
+              <label>Certificate number<span className="req" aria-hidden>*</span><input aria-required value={editForm.certNumber} onChange={(e) => setEditForm((c) => ({ ...c, certNumber: e.target.value }))} /></label>
+              <label>Issue date<span className="req" aria-hidden>*</span><input type="date" aria-required value={editForm.issued} onChange={(e) => setEditForm((c) => ({ ...c, issued: e.target.value }))} /></label>
+              <label>Expiry date<span className="req" aria-hidden>*</span><input type="date" aria-required value={editForm.expires} onChange={(e) => setEditForm((c) => ({ ...c, expires: e.target.value }))} /></label>
+            </>
+          )}
+          {editing?.kind === 'boilerplate' && !editingCert && (
+            <TagPicker value={editForm.tags} onChange={(tags) => setEditForm((c) => ({ ...c, tags }))} />
           )}
         </div>
+        {editProblems.length > 0 && <p className="err small" role="alert">Please fill in: {editProblems.join(', ')}.</p>}
         <p className="muted small">Editing changes the details only. To store a new file, upload it under the same name - that creates a new version.</p>
       </ConfirmDialog>
 

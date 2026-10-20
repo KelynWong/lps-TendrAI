@@ -42,6 +42,8 @@ export const canDo = {
   recordOutcome: (r: Role) => r === 'drb',
   /** commercial figures (Won TCV, needs attention, TCV/cost/EBITDA columns) */
   viewFinancials: (r: Role) => r === 'finance' || r === 'drb',
+  /** Finance and the DRB only ever review: every tender is read-only for them */
+  readOnlyReview: (r: Role) => r === 'finance' || r === 'drb',
 };
 
 /** Workflow stepper every tender shows */

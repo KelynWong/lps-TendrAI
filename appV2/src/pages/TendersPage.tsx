@@ -150,7 +150,7 @@ function TenderDetail() {
           This tender is archived (compressed {t.archivedInfo.sizeFrom} to {t.archivedInfo.sizeTo} on {dateShort(t.archivedInfo.at)}).
           Metadata stays searchable; opening the stored files requires a restore from the Historical data page.
         </Banner>
-      ) : (t.status === 'Won' || t.status === 'Closed') && (
+      ) : (t.status === 'Won' || t.status === 'Closed') && !canDo.readOnlyReview(state.role) && (
         <Banner kind="locked">
           Outcome recorded{t.drbOutcome ? `: ${t.drbOutcome}` : ''}. This tender is closed and
           read-only; its documents and business case stay available in the repository.

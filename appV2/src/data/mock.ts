@@ -1105,6 +1105,18 @@ export const BOILERPLATE: Boilerplate[] = [
   { id: 'cv6', name: 'CV - Grace Lim (Test Lead)', type: 'CV', version: '1.1', owner: 'Priya Nair', uploadedBy: 'Priya Nair', updated: '2026-05-04', role: 'Test Lead', years: 7 },
 ];
 
+/** Tags offered when tagging boilerplate. Tags users create are added to this
+ *  list, so the next item can pick them too. */
+export const BOILERPLATE_TAGS: string[] = [...new Set([
+  'Company profile', 'History', 'Capabilities', 'Corporate', 'UEN', 'GST', 'Legal entity', 'Financial standing',
+  'Organisation', 'Governance', 'Escalation', 'Key personnel', 'Track record', 'Case study', 'References',
+  'Testimonials', 'Public sector', 'Contact centre', 'Commercial', 'Warranty', 'Maintenance', 'SLA', 'Policy',
+  'BCP', 'Disaster recovery', 'Quality', 'Security', 'Cybersecurity', 'PDPA', 'Data protection', 'Privacy',
+  'Legal', 'Insurance', 'Health and safety', 'Sustainability', 'Methodology', 'Project management',
+  'Service management', 'Training', 'Transition', 'Risk management', 'Cloud',
+  ...BOILERPLATE.flatMap((b) => b.tags ?? []),
+])].sort((a, b) => a.localeCompare(b));
+
 // ---- Repository ---------------------------------------------------------------
 
 const RV = (v: number, date: string, by: string, note: string) => ({ v, date, by, note });

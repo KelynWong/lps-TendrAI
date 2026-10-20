@@ -24,6 +24,7 @@ import { TextCell } from './common';
 import { failedChecks, ruleTabs, runFinalChecks, type CheckRun } from '../rules/finalChecks';
 import {
   BC_TABS,
+  MAP_GROUPS,
   MSPO_PLANS,
   SPAN_LABEL,
   buildPlanRows,
@@ -39,6 +40,7 @@ import {
   headersFor,
   parseCell,
   rangeEnd,
+  type MapGroup,
   type MspoFillOptions,
   type MspoPlan,
 } from '../mspo/mapping';
@@ -103,6 +105,23 @@ export function ChecksPanel({ runs, version }: { runs: CheckRun[]; version?: BcV
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** What each failed check expected and found - shown to the reviewing roles
+ *  so they need not expand the version to see why it failed. */
+export function FailedChecksList({ runs }: { runs: CheckRun[] }) {
+  const failed = failedChecks(runs);
+  if (!failed.length) return null;
+  return (
+    <ul className="failed-checks">
+      {failed.map(({ rule, result }) => (
+        <li key={rule.id}>
+          <b>{rule.name}</b>{rule.severity !== 'error' && <span className="muted"> (warning)</span>}
+          {' - '}expected {result.expected}, actual {result.actual}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -219,6 +238,15 @@ function MspoPanel({ t, data, runs, version }: { t: Tender; data: BcVersionData;
   };
   const periods = fiscalPeriods(data).slice(0, fyCount);
   const breakdown = resourceBreakdown(data, fill);
+  const figures = bcFigures(data);
+  /** the headline figures as they read in this version */
+  const figureValue: Record<string, string> = {
+    TCV: money(figures.tcv),
+    'Indirect cost': money(figures.indirect),
+    'Direct cost': money(figures.direct),
+    EBITDA: money(figures.ebitda),
+    'EBITDA (%)': pct(figures.ebitdaPct),
+  };
 
   const dl = (plan: MspoPlan) => {
     downloadMspoPlan(plan, t, data, fill, state.mspoDefaults);
@@ -242,7 +270,7 @@ function MspoPanel({ t, data, runs, version }: { t: Tender; data: BcVersionData;
 
   /** A tender may change a workbook column's tab and first cell; where the
    *  range ends always follows from the rows and fiscal years below. */
-  const commitFrom = (plan: MspoPlan, target: string, tab: string, fromStr: string) => {
+  const commitFrom = (plan: MapGroup, target: string, tab: string, fromStr: string) => {
     const from = parseCell(fromStr);
     if (!from) {
       toast.push('error', 'Invalid cell reference', `"${fromStr}" is not a cell like C6.`);
@@ -285,6 +313,7 @@ function MspoPanel({ t, data, runs, version }: { t: Tender; data: BcVersionData;
         <Banner kind="warning">
           {failed.length} Final Check{failed.length > 1 ? 's' : ''} failed on this version. You can
           still generate the MSPO templates, but the downloads carry this warning.
+          {canDo.readOnlyReview(state.role) && <FailedChecksList runs={runs} />}
         </Banner>
       )}
       {layoutBad && (
@@ -390,15 +419,24 @@ function MspoPanel({ t, data, runs, version }: { t: Tender; data: BcVersionData;
             )}
           </p>
           <div className="mspo-map-stack">
-            {MSPO_PLANS.map((g) => (
+            {MAP_GROUPS.map((g) => (
               <table className="grid" key={g.plan}>
                 <thead>
-                  <tr><th colSpan={4}>{g.title} <span className="muted small">- {rowsOf(g.plan)} business case line{rowsOf(g.plan) === 1 ? '' : 's'}</span></th></tr>
-                  <tr><th style={{ width: '32%' }}>Template column</th><th>Source / tab</th><th>From cell</th><th>To cell</th></tr>
+                  <tr>
+                    <th colSpan={4}>
+                      {g.title}{' '}
+                      <span className="muted small">
+                        {g.plan === 'figures'
+                          ? `- single cells keyed into MSPO, values from v${version?.v ?? '-'}`
+                          : `- ${rowsOf(g.plan)} business case line${rowsOf(g.plan) === 1 ? '' : 's'}`}
+                      </span>
+                    </th>
+                  </tr>
+                  <tr><th style={{ width: '32%' }}>{g.plan === 'figures' ? 'Figure' : 'Template column'}</th><th>Source / tab</th><th>{g.plan === 'figures' ? 'Cell' : 'From cell'}</th><th>{g.plan === 'figures' ? 'Value' : 'To cell'}</th></tr>
                 </thead>
                 <tbody>
                   {effectivePlan(state.mspoDefaults, t, g.plan).map((e) => {
-                    const end = rangeEnd(e, rowsOf(g.plan), fyCount);
+                    const end = g.plan === 'figures' ? figureValue[e.target] ?? 'Single cell' : rangeEnd(e, rowsOf(g.plan), fyCount);
                     return (
                       <tr key={e.target}>
                         <td>
@@ -646,6 +684,7 @@ export function BcSection({ t }: { t: Tender }) {
         <Banner kind="warning">
           Version {selected.v} failed {failed.length} Final Check{failed.length > 1 ? 's' : ''}. This
           warns but does not block: MSPO generation and DRB review stay available.
+          {canDo.readOnlyReview(state.role) && <FailedChecksList runs={runs} />}
         </Banner>
       ))}
 
@@ -893,6 +932,12 @@ export function DrbSummarySection({ t }: { t: Tender }) {
         <div className="kpi"><span>EBITDA</span><b className={ebitda >= 0 ? 'pos' : 'neg'}>{money(ebitda)}</b><div className="muted small">{pct(ebitdaPct)} of TCV</div></div>
         <div className="kpi"><span>Final Check</span><b className={failed.length ? 'neg' : 'pos'}>{failed.length ? `${failed.length} failed` : 'All passed'}</b></div>
       </div>
+      {failed.length > 0 && (
+        <Banner kind="warning">
+          Version {lv.v} failed {failed.length} Final Check{failed.length > 1 ? 's' : ''}:
+          <FailedChecksList runs={runs} />
+        </Banner>
+      )}
       <table className="grid narrow">
         <tbody>
           <tr><td>Project type</td><td>{t.projectType}</td></tr>
@@ -918,6 +963,12 @@ export function DrbBcSection({ t }: { t: Tender }) {
       <p className="sub" style={{ marginBottom: 10 }}>
         Version {lv.v}, {checksLine(runs)} - uploaded by {lv.uploadedBy}, {ts(lv.uploadedAt)} · {lv.fileName}
       </p>
+      {failedChecks(runs).length > 0 && (
+        <Banner kind="warning">
+          Failed Final Checks on version {lv.v}:
+          <FailedChecksList runs={runs} />
+        </Banner>
+      )}
       <div className="drb-bc-viewer">
         <SpreadsheetDocumentViewer
           src={lv.documentUrl ?? '/mock-documents/MHA_business_case_demo.xlsm'}

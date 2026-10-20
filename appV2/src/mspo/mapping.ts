@@ -98,17 +98,34 @@ export const BILLING_FIELD_MAP: FieldMapEntry[] = [
   W('Remark', 'Basic Info', 'D31', 'rows'),
 ];
 
+/** Headline figures keyed into MSPO, each one cell on the Summary tab. They
+ *  are not part of a plan download. */
+export const FIGURES_FIELD_MAP: FieldMapEntry[] = [
+  W('TCV', 'Summary', 'B6', 'single'),
+  W('Indirect cost', 'Summary', 'B14', 'single'),
+  W('Direct cost', 'Summary', 'B24', 'single'),
+  W('EBITDA', 'Summary', 'B50', 'single'),
+  W('EBITDA (%)', 'Summary', 'C50', 'single'),
+];
+
 export type MspoPlan = 'product' | 'resource' | 'billing';
 export const MSPO_PLANS: { plan: MspoPlan; title: string; sheet: string; dnm: string }[] = [
   { plan: 'product', title: 'Product plan template', sheet: PRODUCT_SHEET, dnm: 'Product Plan' },
   { plan: 'resource', title: 'Resource plan template', sheet: RESOURCE_SHEET, dnm: 'Resource Plan' },
   { plan: 'billing', title: 'Billing plan template', sheet: BILLING_SHEET, dnm: 'Billing Plan' },
 ];
-export type MspoDefaults = Record<MspoPlan, FieldMapEntry[]>;
+/** Every mapping table: the three plans, then the headline figures. */
+export type MapGroup = MspoPlan | 'figures';
+export const MAP_GROUPS: { plan: MapGroup; title: string }[] = [
+  ...MSPO_PLANS,
+  { plan: 'figures', title: 'Business case figures' },
+];
+export type MspoDefaults = Record<MapGroup, FieldMapEntry[]>;
 export const DEFAULT_MSPO_MAPPING: MspoDefaults = {
   product: PRODUCT_FIELD_MAP,
   resource: RESOURCE_FIELD_MAP,
   billing: BILLING_FIELD_MAP,
+  figures: FIGURES_FIELD_MAP,
 };
 
 /** Template headers: the three hidden system columns, then the mapped columns. */
@@ -155,7 +172,7 @@ export function validatePlan(entries: FieldMapEntry[]): string[] {
 export function effectivePlan(
   defaults: MspoDefaults,
   t: Pick<Tender, 'mspoMapping'>,
-  plan: MspoPlan,
+  plan: MapGroup,
 ): (FieldMapEntry & { overridden: boolean })[] {
   return defaults[plan].map((d) => {
     const o = t.mspoMapping?.[`${plan}:${d.target}`];

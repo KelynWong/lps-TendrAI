@@ -25,7 +25,7 @@ import {
   type LineOp,
   type RuleDef,
 } from '../rules/finalChecks';
-import { BC_TABS, MSPO_PLANS, SPAN_LABEL, rangeEnd, validatePlan, type FieldMapEntry, type MapSource, type MapSpan, type MspoPlan } from '../mspo/mapping';
+import { BC_TABS, MAP_GROUPS, SPAN_LABEL, rangeEnd, validatePlan, type FieldMapEntry, type MapGroup, type MapSource, type MapSpan } from '../mspo/mapping';
 
 export default function RulesPage() {
   const [tab, setTab] = useState('rules');
@@ -356,13 +356,13 @@ function RulesTab({ editable }: { editable: boolean }) {
 function MappingDefaultsTab({ editable }: { editable: boolean }) {
   const { state, dispatch } = useStore();
   const toast = useToast();
-  const [draft, setDraft] = useState<Record<MspoPlan, FieldMapEntry[]> | null>(null);
+  const [draft, setDraft] = useState<Record<MapGroup, FieldMapEntry[]> | null>(null);
   const view = draft ?? state.mspoDefaults;
-  const problems = Object.fromEntries(MSPO_PLANS.map(({ plan }) => [plan, validatePlan(view[plan])])) as Record<MspoPlan, string[]>;
+  const problems = Object.fromEntries(MAP_GROUPS.map(({ plan }) => [plan, validatePlan(view[plan])])) as Record<MapGroup, string[]>;
   const anyProblem = Object.values(problems).some((p) => p.length);
   const adjusted = state.tenders.filter((t) => (t.mspoMapping && Object.keys(t.mspoMapping).length) || (t.mspoRows && Object.values(t.mspoRows).some((v) => v !== undefined)) || t.mspoFyCount !== undefined).length;
 
-  const update = (plan: MspoPlan, target: string, patch: Partial<FieldMapEntry>) =>
+  const update = (plan: MapGroup, target: string, patch: Partial<FieldMapEntry>) =>
     setDraft((d) => {
       const base = d ?? state.mspoDefaults;
       return { ...base, [plan]: base[plan].map((e) => (e.target === target ? { ...e, ...patch } : e)) };
@@ -370,7 +370,7 @@ function MappingDefaultsTab({ editable }: { editable: boolean }) {
 
   const save = () => {
     if (!draft || anyProblem) return;
-    for (const { plan } of MSPO_PLANS) {
+    for (const { plan } of MAP_GROUPS) {
       if (JSON.stringify(draft[plan]) !== JSON.stringify(state.mspoDefaults[plan])) {
         dispatch({ type: 'set-mspo-defaults', plan, entries: draft[plan] });
       }
@@ -401,12 +401,12 @@ function MappingDefaultsTab({ editable }: { editable: boolean }) {
         )}
       </div>
       <div className="mspo-map-stack">
-        {MSPO_PLANS.map(({ plan, title }) => (
+        {MAP_GROUPS.map(({ plan, title }) => (
           <div key={plan}>
             <table className="grid">
               <thead>
-                <tr><th colSpan={5}>{title}</th></tr>
-                <tr><th style={{ width: '30%' }}>Template column</th><th>Source</th><th>Business case tab</th><th>From cell</th><th>Runs to</th></tr>
+                <tr><th colSpan={5}>{title}{plan === 'figures' && <span className="muted small"> - single cells keyed into MSPO, not part of a plan download</span>}</th></tr>
+                <tr><th style={{ width: '30%' }}>{plan === 'figures' ? 'Figure' : 'Template column'}</th><th>Source</th><th>Business case tab</th><th>From cell</th><th>Runs to</th></tr>
               </thead>
               <tbody>
                 {view[plan].map((e) => (
