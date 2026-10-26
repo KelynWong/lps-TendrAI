@@ -10,7 +10,6 @@ import type {
   ChecklistItem,
   Clause,
   ClauseChange,
-  GenDoc,
   PackDoc,
   PackDocRole,
   RepoRecord,
@@ -21,7 +20,7 @@ import type {
 } from '../types';
 import { PROCESS_STAGES } from '../types';
 import type { Role, UserInfo } from '../config';
-import { AUDIT, BACKUP, BOILERPLATE, BOILERPLATE_TAGS, REPOSITORY, TEMPLATES, TENDERS } from '../data/mock';
+import { AUDIT, BOILERPLATE, BOILERPLATE_TAGS, REPOSITORY, TEMPLATES, TENDERS } from '../data/mock';
 import { buildDemoExtraction } from '../data/extraction';
 import { DEFAULT_RULES, type RuleDef } from '../rules/finalChecks';
 import { DEFAULT_MSPO_MAPPING, type FieldMapEntry, type MapGroup, type MspoDefaults, type MspoPlan } from '../mspo/mapping';
@@ -36,7 +35,6 @@ export interface AppState {
   /** tags offered for boilerplate; grows as users create tags */
   boilerplateTags: string[];
   repository: RepoRecord[];
-  backup: typeof BACKUP & { lastRestoreDemo?: string };
   audit: AuditEntry[];
   /** Final Check rules applied to every business case upload */
   rules: RuleDef[];
@@ -73,8 +71,6 @@ export type Action =
   | { type: 'upsert-rule'; rule: RuleDef }
   | { type: 'delete-rule'; id: string }
   | { type: 'set-mspo-defaults'; plan: MapGroup; entries: FieldMapEntry[] }
-  | { type: 'set-mspo-rows'; tenderId: string; plan: MspoPlan; rows?: number }
-  | { type: 'set-mspo-meta'; tenderId: string; quoteLine?: string; fyCount?: number; daysPerMonth?: number }
   | { type: 'open-audit'; tender?: string; section?: string; returnTo?: ReturnTarget }
   | { type: 'go-to'; page: string; sub?: string; returnTo?: ReturnTarget }
   | { type: 'back-to-tender' }
@@ -87,13 +83,11 @@ export type Action =
   | { type: 'upload-boilerplate'; item: Boilerplate; replaceId?: string }
   | { type: 'login'; user: UserInfo }
   | { type: 'logout' }
-  | { type: 'set-role'; role: Role }
   | { type: 'open-tender'; id: string }
   | { type: 'create-tender'; tender: Tender }
   | { type: 'update-tender'; tenderId: string; patch: Partial<Pick<Tender, 'sfdcCrmId' | 'ref' | 'name' | 'agency' | 'type' | 'closingDate'>> }
   | { type: 'delete-tender'; tenderId: string }
   | { type: 'close-tender' }
-  | { type: 'set-step'; tenderId: string; idx: number }
   | { type: 'correct-doc-role'; tenderId: string; docId: string; role: PackDocRole }
   | { type: 'add-pack-docs'; tenderId: string; docs: PackDoc[] }
   | { type: 'move-pack-doc'; tenderId: string; docId: string; direction: 'up' | 'down' }
@@ -111,23 +105,17 @@ export type Action =
   | { type: 'delete-bc-version'; tenderId: string; v: number }
   | { type: 'set-tender-status'; tenderId: string; status: Tender['status']; statusReason: Tender['statusReason'] }
   | { type: 'patch-checklist'; tenderId: string; itemId: string; patch: Partial<ChecklistItem> }
-  | { type: 'patch-clause'; tenderId: string; clauseId: string; patch: Partial<Clause> }
   /** several clause edits saved together (one audit entry) */
   | { type: 'save-clauses'; tenderId: string; patches: { clauseId: string; patch: Partial<Clause> }[] }
   | { type: 'patch-qual'; tenderId: string; qualId: string; patch: Partial<Qualification> }
   | { type: 'upload-bc'; tenderId: string; version: BcVersion }
-  | { type: 'set-drb'; tenderId: string; outcome?: Tender['drbOutcome']; notes?: string }
-  | { type: 'patch-gendoc'; tenderId: string; docId: string; patch: Partial<GenDoc> }
-  | { type: 'add-template'; tpl: TemplateDoc }
   | { type: 'update-template'; id: string; patch: Partial<TemplateDoc> }
   | { type: 'delete-template'; id: string }
-  | { type: 'add-boilerplate'; item: Boilerplate }
   | { type: 'update-boilerplate'; id: string; patch: Partial<Boilerplate> }
   | { type: 'delete-boilerplate'; id: string }
   | { type: 'archive-repo'; id: string; sizeFrom: string; sizeTo: string }
   | { type: 'request-restore'; id: string }
-  | { type: 'complete-restore'; id: string }
-  | { type: 'backup-restore-demo' };
+  | { type: 'complete-restore'; id: string };
 
 function patchTender(state: AppState, id: string, fn: (t: Tender) => Tender): AppState {
   return { ...state, tenders: state.tenders.map((t) => (t.id === id ? fn(t) : t)) };
@@ -159,8 +147,6 @@ function reducer(state: AppState, a: Action): AppState {
       return { ...state, user: a.user, role: a.user.role };
     case 'logout':
       return { ...state, user: null, activeTenderId: null };
-    case 'set-role':
-      return { ...state, role: a.role };
     case 'open-tender':
       return { ...state, activeTenderId: a.id };
     case 'create-tender':
@@ -200,8 +186,6 @@ function reducer(state: AppState, a: Action): AppState {
       return { ...state, packTabRequest: undefined };
     case 'clear-audit-prefill':
       return { ...state, auditPrefill: undefined };
-    case 'set-step':
-      return patchTender(state, a.tenderId, (t) => ({ ...t, stepIdx: Math.max(t.stepIdx, a.idx) }));
     case 'correct-doc-role':
       return patchTender(state, a.tenderId, (t) => ({
         ...t,
@@ -345,9 +329,8 @@ function reducer(state: AppState, a: Action): AppState {
         ...t,
         checklist: t.checklist.map((k) => (k.id === a.itemId ? { ...k, ...a.patch } : k)),
       }));
-    case 'patch-clause':
     case 'save-clauses': {
-      const patches = a.type === 'patch-clause' ? [{ clauseId: a.clauseId, patch: a.patch }] : a.patches;
+      const patches = a.patches;
       const now = new Date().toISOString();
       const by = state.user?.name ?? 'Unknown';
       return patchTender(state, a.tenderId, (t) => ({
@@ -378,21 +361,6 @@ function reducer(state: AppState, a: Action): AppState {
         bcVersions: [...t.bcVersions, a.version],
         stepIdx: Math.max(t.stepIdx, 2),
       }));
-    case 'set-drb':
-      return patchTender(state, a.tenderId, (t) => ({
-        ...t,
-        drbOutcome: a.outcome ?? t.drbOutcome,
-        drbNotes: a.notes ?? t.drbNotes,
-        status: a.outcome === 'Won' ? 'Won' : a.outcome === 'Lost' ? 'Closed' : t.status,
-        statusReason: a.outcome === 'Won' ? 'Won (Won)' : a.outcome === 'Lost' ? 'Lost (Closed)' : t.statusReason,
-        stepIdx: a.outcome && a.outcome !== 'Awaiting result' ? 5 : Math.max(t.stepIdx, 3),
-      }));
-    case 'patch-gendoc':
-      return patchTender(state, a.tenderId, (t) => ({
-        ...t,
-        genDocs: t.genDocs.map((g) => (g.id === a.docId ? { ...g, ...a.patch } : g)),
-        stepIdx: Math.max(t.stepIdx, 4),
-      }));
     case 'log':
       return state; // the audit wrapper records it
     case 'upsert-rule':
@@ -406,8 +374,6 @@ function reducer(state: AppState, a: Action): AppState {
       return { ...state, rules: state.rules.filter((r) => r.id !== a.id) };
     case 'set-mspo-defaults':
       return { ...state, mspoDefaults: { ...state.mspoDefaults, [a.plan]: a.entries } };
-    case 'set-mspo-rows':
-      return patchTender(state, a.tenderId, (t) => ({ ...t, mspoRows: { ...t.mspoRows, [a.plan]: a.rows } }));
     case 'set-mspo-details':
       return patchTender(state, a.tenderId, (t) => ({
         ...t,
@@ -415,13 +381,6 @@ function reducer(state: AppState, a: Action): AppState {
         mspoFyCount: a.fyCount,
         mspoDaysPerMonth: a.daysPerMonth,
         mspoRows: { ...a.rows },
-      }));
-    case 'set-mspo-meta':
-      return patchTender(state, a.tenderId, (t) => ({
-        ...t,
-        ...(a.quoteLine !== undefined ? { mspoQuoteLine: a.quoteLine || undefined } : {}),
-        ...('fyCount' in a ? { mspoFyCount: a.fyCount } : {}),
-        ...('daysPerMonth' in a ? { mspoDaysPerMonth: a.daysPerMonth } : {}),
       }));
     case 'reset-mspo-mapping':
       return patchTender(state, a.tenderId, (t) => {
@@ -454,14 +413,10 @@ function reducer(state: AppState, a: Action): AppState {
       };
       return withTags({ ...state, boilerplate: state.boilerplate.map((x) => (x.id === old.id ? next : x)) }, a.item.tags);
     }
-    case 'add-template':
-      return { ...state, templates: [a.tpl, ...state.templates] };
     case 'update-template':
       return { ...state, templates: state.templates.map((x) => (x.id === a.id ? { ...x, ...a.patch } : x)) };
     case 'delete-template':
       return { ...state, templates: state.templates.filter((x) => x.id !== a.id) };
-    case 'add-boilerplate':
-      return withTags({ ...state, boilerplate: [a.item, ...state.boilerplate] }, a.item.tags);
     case 'update-boilerplate':
       return withTags({ ...state, boilerplate: state.boilerplate.map((x) => (x.id === a.id ? { ...x, ...a.patch } : x)) }, a.patch.tags);
     case 'delete-boilerplate':
@@ -491,8 +446,6 @@ function reducer(state: AppState, a: Action): AppState {
             : r,
         ),
       };
-    case 'backup-restore-demo':
-      return { ...state, backup: { ...state.backup, lastRestoreDemo: new Date().toISOString() } };
     default:
       return state;
   }
@@ -543,16 +496,8 @@ function describe(prev: AppState, a: Action, next: AppState): Described | null {
       return { action: 'Rule deleted', detail: prev.rules.find((r) => r.id === a.id)?.name ?? '', section: 'Business case management' };
     case 'set-mspo-defaults':
       return { action: 'MSPO default mapping changed', detail: a.plan === 'figures' ? 'Business case figures' : `${a.plan} plan`, section: 'Business case management' };
-    case 'set-mspo-rows':
-      return { action: 'MSPO row count changed', detail: `${a.plan} plan: ${a.rows ?? 'default'} rows`, tender: refOf(a.tenderId), section: 'MSPO templates' };
     case 'set-mspo-details':
       return { action: 'MSPO details saved', detail: a.changes.join('; '), tender: refOf(a.tenderId), section: 'MSPO templates' };
-    case 'set-mspo-meta':
-      return a.quoteLine !== undefined
-        ? { action: 'MSPO quote line set', detail: a.quoteLine || '(cleared)', tender: refOf(a.tenderId), section: 'MSPO templates' }
-        : 'daysPerMonth' in a
-          ? { action: 'MSPO man-days per month changed', detail: `${a.daysPerMonth ?? 'default'} man-days per month`, tender: refOf(a.tenderId), section: 'MSPO templates' }
-          : { action: 'MSPO fiscal years changed', detail: `${a.fyCount ?? 'default'} fiscal year(s)`, tender: refOf(a.tenderId), section: 'MSPO templates' };
     case 'reset-mspo-mapping':
       return { action: 'MSPO mapping reset to default', detail: a.key ? mapKeyLabel(a.key) : 'All plans', tender: refOf(a.tenderId), section: 'MSPO templates' };
     case 'logout':
@@ -611,10 +556,8 @@ function describe(prev: AppState, a: Action, next: AppState): Described | null {
       const cert = prev.boilerplate.find((b) => b.id === a.patch.evidence);
       return { action: 'Certificate linked', detail: `${q.requirement} -> ${cert ? `${cert.name} v${cert.version}` : 'None'}`, tender: refOf(a.tenderId), section: 'Qualification' };
     }
-    case 'patch-clause':
     case 'save-clauses': {
-      const patches = a.type === 'patch-clause' ? [{ clauseId: a.clauseId, patch: a.patch }] : a.patches;
-      const lines = patches.flatMap(({ clauseId, patch }) => {
+      const lines = a.patches.flatMap(({ clauseId, patch }) => {
         const c = tenderOf(a.tenderId)?.clauses.find((x) => x.id === clauseId);
         if (!c) return [];
         const parts: string[] = [];
@@ -684,7 +627,6 @@ const initial: AppState = {
   boilerplate: BOILERPLATE,
   boilerplateTags: BOILERPLATE_TAGS,
   repository: REPOSITORY,
-  backup: BACKUP,
   audit: AUDIT,
   rules: DEFAULT_RULES,
   mspoDefaults: DEFAULT_MSPO_MAPPING,

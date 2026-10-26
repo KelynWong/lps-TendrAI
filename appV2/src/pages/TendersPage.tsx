@@ -127,13 +127,13 @@ function TenderDetail() {
           <div>
             <h2>
               {t.name} <StatusPill value={t.statusReason} />
-              {state.role === 'bidding-manager' && (
-                <IconButton
-                  label="Change status"
-                  icon={Pencil}
-                  onClick={() => { setStatusForm({ status: t.status, statusReason: t.statusReason }); setStatusOpen(true); }}
-                />
-              )}
+              <IconButton
+                label="Change status"
+                icon={Pencil}
+                disabled={state.role !== 'bidding-manager'}
+                reason="only the Bidding Manager changes a tender's status"
+                onClick={() => { setStatusForm({ status: t.status, statusReason: t.statusReason }); setStatusOpen(true); }}
+              />
             </h2>
             <div className="detail-meta">
               <span>Ref: <b className="mono">{t.ref || 'Not set'}</b></span>
@@ -286,6 +286,7 @@ function TenderList() {
   const [deleteTender, setDeleteTender] = useState<Tender | null>(null);
   const [form, setForm] = useState<TenderForm>(emptyForm);
   const isBiddingManager = state.role === 'bidding-manager';
+  const BM_ONLY = 'only the Bidding Manager edits and deletes tenders';
   // Won TCV, needs attention and the money columns are for Finance and the DRB
   const financials = canDo.viewFinancials(state.role);
   const figuresOf = (t: Tender) => {
@@ -344,7 +345,15 @@ function TenderList() {
       <div className="filter-row">
         {financials && <WonTcvCards />}
         <span style={{ marginLeft: 'auto' }}>
-          {isBiddingManager && <Button variant="primary" icon={Plus} onClick={() => { setForm(emptyForm); setCreateOpen(true); }}>Create tender</Button>}
+          <Button
+            variant="primary"
+            icon={Plus}
+            disabled={!isBiddingManager}
+            title={isBiddingManager ? undefined : 'Only the Bidding Manager creates tenders'}
+            onClick={() => { setForm(emptyForm); setCreateOpen(true); }}
+          >
+            Create tender
+          </Button>
         </span>
       </div>
       <div className="table-viewport">
@@ -368,7 +377,7 @@ function TenderList() {
                 </>
               )}
               {!financials && <SortTh label="Needs attention" k="attention" sort={sort} onToggle={toggle} />}
-              {isBiddingManager && <th aria-label="Actions" />}
+              <th aria-label="Actions" />
             </tr>
           </thead>
           <tbody>
@@ -400,19 +409,17 @@ function TenderList() {
                       </span>
                     ) : <span className="attn attn-ok">-</span>}
                   </td>}
-                  {isBiddingManager && (
-                    <td className="table-actions" onClick={(event) => event.stopPropagation()}>
-                      <IconButton label={`Edit ${t.name}`} icon={Pencil} onClick={() => {
-                        setEditTender(t);
-                        setForm({ sfdcCrmId: t.sfdcCrmId ?? '', ref: t.ref, name: t.name, agency: t.agency, type: t.type, closingDate: t.closingDate });
-                      }} />
-                      <IconButton label={`Delete ${t.name}`} icon={Trash2} danger onClick={() => setDeleteTender(t)} />
-                    </td>
-                  )}
+                  <td className="table-actions" onClick={(event) => event.stopPropagation()}>
+                    <IconButton label={`Edit ${t.name}`} icon={Pencil} disabled={!isBiddingManager} reason={BM_ONLY} onClick={() => {
+                      setEditTender(t);
+                      setForm({ sfdcCrmId: t.sfdcCrmId ?? '', ref: t.ref, name: t.name, agency: t.agency, type: t.type, closingDate: t.closingDate });
+                    }} />
+                    <IconButton label={`Delete ${t.name}`} icon={Trash2} danger disabled={!isBiddingManager} reason={BM_ONLY} onClick={() => setDeleteTender(t)} />
+                  </td>
                 </tr>
               );
             })}
-            {sorted.length === 0 && <tr><td colSpan={8 + (financials ? 4 : 1) + (isBiddingManager ? 1 : 0)} className="muted">No tenders match these filters. Clear the column filters to see all {state.tenders.length} tenders.</td></tr>}
+            {sorted.length === 0 && <tr><td colSpan={8 + (financials ? 4 : 1) + 1} className="muted">No tenders match these filters. Clear the column filters to see all {state.tenders.length} tenders.</td></tr>}
           </tbody>
         </table>
       </div>

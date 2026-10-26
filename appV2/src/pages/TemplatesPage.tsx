@@ -23,6 +23,8 @@ type EditTarget =
   | { kind: 'boilerplate'; item: Boilerplate };
 type DeleteTarget = EditTarget;
 
+const LIB_ONLY = 'only the Bidding Manager and BD team manage the library';
+
 export default function TemplatesPage() {
   const { state, dispatch } = useStore();
   const toast = useToast();
@@ -210,8 +212,8 @@ export default function TemplatesPage() {
     <td className="table-actions" style={{ whiteSpace: 'nowrap' }}>
       <IconButton label={`Preview ${target.item.name}`} icon={Eye} onClick={onPreview} />
       <IconButton label={`Download ${target.item.name} v${target.item.version}`} icon={Download} onClick={() => downloadVersion(target, target.item.version)} />
-      {editable && <IconButton label={`Edit ${target.item.name}`} icon={Pencil} onClick={() => openEdit(target)} />}
-      {editable && <IconButton label={`Delete ${target.item.name}`} icon={Trash2} danger onClick={() => setDeleting(target)} />}
+      <IconButton label={`Edit ${target.item.name}`} icon={Pencil} disabled={!editable} reason={LIB_ONLY} onClick={() => openEdit(target)} />
+      <IconButton label={`Delete ${target.item.name}`} icon={Trash2} danger disabled={!editable} reason={LIB_ONLY} onClick={() => setDeleting(target)} />
     </td>
   );
 

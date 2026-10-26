@@ -27,6 +27,8 @@ import {
 } from '../rules/finalChecks';
 import { BC_TABS, MAP_GROUPS, SPAN_LABEL, rangeEnd, validatePlan, type FieldMapEntry, type MapGroup, type MapSource, type MapSpan } from '../mspo/mapping';
 
+const BD_ONLY = 'Only the BD team manages Final Check rules and MSPO mapping defaults';
+
 export default function RulesPage() {
   const [tab, setTab] = useState('rules');
   const { state } = useStore();
@@ -164,11 +166,9 @@ function RulesTab({ editable }: { editable: boolean }) {
         <span className="muted small">
           {enabledCount} of {state.rules.length} rules are applied to every business case upload. Failed checks warn - they never block.
         </span>
-        {editable && (
-          <span className="review-toolbar-actions">
-            <Button variant="primary" compact icon={Plus} onClick={() => setDraft(blankRule())}>Add rule</Button>
-          </span>
-        )}
+        <span className="review-toolbar-actions">
+          <Button variant="primary" compact icon={Plus} disabled={!editable} title={editable ? undefined : BD_ONLY} onClick={() => setDraft(blankRule())}>Add rule</Button>
+        </span>
       </div>
       <table className="grid">
         <thead>
@@ -194,8 +194,8 @@ function RulesTab({ editable }: { editable: boolean }) {
               <td>{ruleTabs(r).map((t) => <span key={t} className="badge badge-neutral" style={{ marginRight: 4 }}>{t}</span>)}</td>
               <td><span className={`pill ${r.severity === 'error' ? 'pill-lost' : 'pill-review'}`}>{r.severity === 'error' ? 'Fail' : 'Warning'}</span></td>
               <td className="table-actions" style={{ whiteSpace: 'nowrap' }}>
-                {editable && <IconButton label={`Edit ${r.name}`} icon={Pencil} onClick={() => setDraft({ ...r })} />}
-                {editable && <IconButton label={`Delete ${r.name}`} icon={Trash2} danger onClick={() => setDeleting(r)} />}
+                <IconButton label={`Edit ${r.name}`} icon={Pencil} disabled={!editable} reason={BD_ONLY} onClick={() => setDraft({ ...r })} />
+                <IconButton label={`Delete ${r.name}`} icon={Trash2} danger disabled={!editable} reason={BD_ONLY} onClick={() => setDeleting(r)} />
               </td>
             </tr>
           ))}
@@ -387,18 +387,16 @@ function MappingDefaultsTab({ editable }: { editable: boolean }) {
           vary per business case, so each tender keys them in (with its MSPO quote line) before download.
           {adjusted > 0 && <> {adjusted} tender{adjusted === 1 ? ' has' : 's have'} its own adjustments.</>}
         </span>
-        {editable && (
-          <span className="review-toolbar-actions">
-            {draft ? (
-              <>
-                <Button compact onClick={() => setDraft(null)}>Discard changes</Button>
-                <Button compact variant="primary" disabled={anyProblem} title={anyProblem ? 'Fix the problems listed under each plan first' : undefined} onClick={save}>Save defaults</Button>
-              </>
-            ) : (
-              <Button compact icon={Pencil} onClick={() => setDraft(state.mspoDefaults)}>Edit defaults</Button>
-            )}
-          </span>
-        )}
+        <span className="review-toolbar-actions">
+          {draft ? (
+            <>
+              <Button compact onClick={() => setDraft(null)}>Discard changes</Button>
+              <Button compact variant="primary" disabled={anyProblem} title={anyProblem ? 'Fix the problems listed under each plan first' : undefined} onClick={save}>Save defaults</Button>
+            </>
+          ) : (
+            <Button compact icon={Pencil} disabled={!editable} title={editable ? undefined : BD_ONLY} onClick={() => setDraft(state.mspoDefaults)}>Edit defaults</Button>
+          )}
+        </span>
       </div>
       <div className="mspo-map-stack">
         {MAP_GROUPS.map(({ plan, title }) => (

@@ -3,7 +3,6 @@ import { createRoot } from 'react-dom/client';
 import './ui/tokens.css';
 import './styles.css';
 import './v2.css';
-import '@grid-is/spreadsheet-viewer/style.css';
 import App from './App';
 
 createRoot(document.getElementById('root')!).render(

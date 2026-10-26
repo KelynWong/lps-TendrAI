@@ -36,13 +36,6 @@ export interface CitationInfo {
   documentUrl?: string;
 }
 
-/** The uploaded tender document this business case was generated from. */
-export interface TenderDocInfo {
-  ref: string;
-  title: string;
-  fileName: string;
-}
-
 // Default is a no-op so badges outside the provider degrade gracefully
 const Ctx = createContext<{ show: (c: CitationInfo) => void }>({ show: () => {} });
 

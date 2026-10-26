@@ -6,23 +6,15 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import {
-  AlertTriangle,
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
-  Clock,
-  FilePlus2,
-  FileQuestion,
   Filter,
-  Pencil,
-  Sparkles,
 } from 'lucide-react';
-import type { ExtractReviewState } from '../types';
 
 // ---- Sorting ---------------------------------------------------------------
 
@@ -206,22 +198,6 @@ export function SortTh({
 
 // ---- Pagination ------------------------------------------------------------
 
-export function usePager<T>(items: T[], pageSize = 10) {
-  const [page, setPage] = useState(0);
-  const pages = Math.max(1, Math.ceil(items.length / pageSize));
-  const cur = Math.min(page, pages - 1);
-  const slice = items.slice(cur * pageSize, cur * pageSize + pageSize);
-  return {
-    slice,
-    cur,
-    pages,
-    total: items.length,
-    from: items.length ? cur * pageSize + 1 : 0,
-    to: cur * pageSize + slice.length,
-    setPage,
-  };
-}
-
 export const PAGE_SIZES = [10, 20, 50, 100];
 
 /** Pager for the list pages (Tenders, Historical data, Audit log): the user
@@ -335,58 +311,6 @@ export function TextCell({
 }
 
 // ---- v2 badges -------------------------------------------------------------
-
-/** AI output trust: distinguishable by icon + label, never colour alone.
- *  Also carries the reprocess lifecycle (new / changed / not found). */
-export function AiBadge({ reviewedBy, reviewState }: { reviewedBy?: string; reviewState?: ExtractReviewState }) {
-  if (reviewState === 'new') {
-    return (
-      <span className="badge badge-estimate" title="Added by the latest processing run - not reviewed yet.">
-        <FilePlus2 size={12} aria-hidden /> New, not reviewed
-      </span>
-    );
-  }
-  if (reviewState === 'changed') {
-    return (
-      <span className="badge badge-estimate" title="The latest processing run changed this item - please review it again.">
-        <Pencil size={12} aria-hidden /> Changed, please review
-      </span>
-    );
-  }
-  if (reviewState === 'missing') {
-    return (
-      <span className="badge badge-neutral" title="Not found by the latest processing run. Kept so nothing is silently deleted - verify, then remove if confirmed.">
-        <FileQuestion size={12} aria-hidden /> Not found in latest run
-      </span>
-    );
-  }
-  return reviewedBy ? (
-    <span className="badge badge-human" title={`Reviewed by ${reviewedBy}`}>
-      <CheckCircle2 size={12} aria-hidden /> Reviewed · {reviewedBy.split(' ')[0]}
-    </span>
-  ) : (
-    <span className="badge badge-estimate" title="AI-extracted, not reviewed yet. Verify against the source before relying on it.">
-      <Sparkles size={12} aria-hidden /> AI-extracted · not reviewed
-    </span>
-  );
-}
-
-/** Deadline chip: icon + text (overdue / due soon / ok), not colour alone. */
-export function DeadlineChip({ date, done }: { date: string; done?: boolean }) {
-  const today = new Date().toISOString().slice(0, 10);
-  const days = Math.ceil((new Date(date).getTime() - new Date(today).getTime()) / 86400000);
-  const label = new Date(date).toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' });
-  if (done) {
-    return <span className="badge badge-human"><CheckCircle2 size={12} aria-hidden /> {label}</span>;
-  }
-  if (days < 0) {
-    return <span className="badge badge-overdue"><AlertTriangle size={12} aria-hidden /> Overdue · {label}</span>;
-  }
-  if (days <= 7) {
-    return <span className="badge badge-estimate"><Clock size={12} aria-hidden /> Due in {days}d · {label}</span>;
-  }
-  return <span className="badge badge-neutral"><Clock size={12} aria-hidden /> {label}</span>;
-}
 
 /** Generic status pill used across checklist, documents and repository.
  *  One vocabulary across the app - add new statuses here, not inline. */

@@ -5,7 +5,7 @@
 import { useEffect, useRef } from 'react';
 import type { ReactNode, ButtonHTMLAttributes } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { AlertTriangle, CheckCircle2, Info, Lock, Plus as PlusIcon, XCircle, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Info, Lock, XCircle, X } from 'lucide-react';
 
 // ---- Buttons ---------------------------------------------------------------
 
@@ -36,17 +36,20 @@ export function IconButton({
   icon: Icon,
   className = '',
   danger,
+  reason,
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   label: string;
   icon: LucideIcon;
   danger?: boolean;
+  /** why the button is disabled, shown in its tooltip */
+  reason?: string;
 }) {
   return (
     <button
       className={`icon-btn ${danger ? 'icon-btn-danger' : ''} ${className}`}
       aria-label={label}
-      title={label}
+      title={rest.disabled && reason ? `${label} - ${reason.charAt(0).toLowerCase()}${reason.slice(1)}` : label}
       {...rest}
     >
       <Icon size={16} aria-hidden />
@@ -274,25 +277,3 @@ export function TabsBar({
 
 export { X as CloseIcon };
 
-// ---- In-table add-row (divider with a + in the middle) ---------------------
-
-export function AddRowButton({
-  colSpan,
-  label,
-  onClick,
-}: {
-  colSpan: number;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <tr className="add-row">
-      <td colSpan={colSpan}>
-        <button type="button" onClick={onClick}>
-          <PlusIcon size={14} aria-hidden />
-          {label}
-        </button>
-      </td>
-    </tr>
-  );
-}

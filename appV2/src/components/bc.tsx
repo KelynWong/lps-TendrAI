@@ -336,8 +336,7 @@ function MspoPanel({ t, data, runs, version }: { t: Tender; data: BcVersionData;
                 Create the quote line in MSPO first. Last rows and fiscal years are read from v{version?.v ?? '-'}; correct them if this workbook differs.
               </div>
             </div>
-            {canEdit && (
-              <span className="review-toolbar-actions">
+            <span className="review-toolbar-actions">
                 {editing ? (
                   <>
                     <Button compact onClick={() => setDetails(null)}>Cancel</Button>
@@ -352,10 +351,9 @@ function MspoPanel({ t, data, runs, version }: { t: Tender; data: BcVersionData;
                     </Button>
                   </>
                 ) : (
-                  <Button compact icon={Pencil} onClick={() => setDetails(saved)}>Edit details</Button>
+                  <Button compact icon={Pencil} disabled={!canEdit} title={canEdit ? undefined : 'Only the BD team edits the MSPO details'} onClick={() => setDetails(saved)}>Edit details</Button>
                 )}
               </span>
-            )}
           </div>
           <div className="muted small mspo-period">
             Project period (Basic Info D7-D9): <b>{dateShort(period.start.toISOString())}</b> to <b>{dateShort(period.end.toISOString())}</b>, {period.months} months
@@ -414,8 +412,8 @@ function MspoPanel({ t, data, runs, version }: { t: Tender; data: BcVersionData;
             Defaults are managed on the Business case management page. Each range runs from its first
             cell to the last row and fiscal-year column keyed in above. Change a column's tab or first
             cell here for this tender only.
-            {anyOverride && canEdit && (
-              <> <button type="button" className="link-btn" onClick={() => dispatch({ type: 'reset-mspo-mapping', tenderId: t.id })}>Reset this tender to the defaults</button></>
+            {anyOverride && (
+              <> <button type="button" className="link-btn" disabled={!canEdit} title={canEdit ? undefined : 'Only the BD team edits the MSPO mapping'} onClick={() => dispatch({ type: 'reset-mspo-mapping', tenderId: t.id })}>Reset this tender to the defaults</button></>
             )}
           </p>
           <div className="mspo-map-stack">
@@ -730,9 +728,14 @@ export function BcSection({ t }: { t: Tender }) {
                         : f === 0 ? <span className="ok"><Check size={13} aria-hidden /> All passed</span> : <span className="err"><AlertTriangle size={13} aria-hidden /> {f} failed</span>}
                     </td>
                     <td className="table-actions">
-                      {canUpload && (
-                        <IconButton label={`Delete version ${v.v}`} icon={Trash2} danger onClick={() => setDeleteVersion(v)} />
-                      )}
+                      <IconButton
+                        label={`Delete version ${v.v}`}
+                        icon={Trash2}
+                        danger
+                        disabled={!canUpload}
+                        reason={isTenderLocked(t) ? 'this tender is closed' : 'only the BD team deletes business case versions'}
+                        onClick={() => setDeleteVersion(v)}
+                      />
                     </td>
                   </tr>
                   {expanded && !bad && (

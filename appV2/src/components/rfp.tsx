@@ -132,7 +132,7 @@ function PartialResultsBanner({ t }: { t: Tender }) {
 }
 
 /** Out-of-date banner: the document set changed after the last run. */
-function OutOfDateBanner({ t, onReprocess, canProcess }: { t: Tender; onReprocess: () => void; canProcess: boolean }) {
+function OutOfDateBanner({ t, onReprocess, blockedReason }: { t: Tender; onReprocess: () => void; blockedReason?: string }) {
   if (!t.outOfDate || t.job) return null;
   const parts: string[] = [];
   if (t.outOfDate.added) parts.push(`${t.outOfDate.added} document${t.outOfDate.added > 1 ? 's' : ''} added`);
@@ -141,7 +141,7 @@ function OutOfDateBanner({ t, onReprocess, canProcess }: { t: Tender; onReproces
   return (
     <Banner
       kind="warning"
-      actions={canProcess ? <Button compact variant="primary" icon={RefreshCw} onClick={onReprocess}>Reprocess documents</Button> : undefined}
+      actions={<Button compact variant="primary" icon={RefreshCw} disabled={!!blockedReason} title={blockedReason} onClick={onReprocess}>Reprocess documents</Button>}
     >
       Results are out of date: {parts.join(', ')}. Reprocess to update - your compliance statuses
       and responses are kept.
@@ -319,18 +319,18 @@ export function PackSection({ t }: { t: Tender }) {
       </div>
 
       {t.processFailed && !jobRunning && (
-        <Banner kind="error" actions={canUpload ? <Button compact variant="primary" icon={RefreshCw} onClick={startProcessing}>Retry processing</Button> : undefined}>
+        <Banner kind="error" actions={<Button compact variant="primary" icon={RefreshCw} disabled={!canUpload} title={canUpload ? undefined : noPermission} onClick={startProcessing}>Retry processing</Button>}>
           {t.processFailed}
         </Banner>
       )}
-      <OutOfDateBanner t={t} onReprocess={startProcessing} canProcess={canUpload && !jobRunning} />
+      <OutOfDateBanner t={t} onReprocess={startProcessing} blockedReason={!canUpload ? noPermission : undefined} />
       <PartialResultsBanner t={t} />
       <JobPanel t={t} />
 
       <table className="grid">
         <thead>
           <tr>
-            {canUpload && <th aria-label="Reorder" className="pack-order-head" />}
+            <th aria-label="Reorder" className="pack-order-head" />
             <th aria-label="Row number" />
             <SortTh label="Document" k="document" sort={sort} onToggle={toggle} {...packFilterColumn('document')} />
             <SortTh label="File type" k="fileType" sort={sort} onToggle={toggle} {...packFilterColumn('fileType')} />
@@ -364,11 +364,11 @@ export function PackSection({ t }: { t: Tender }) {
               }}
               className={draggedDocId === d.id ? 'pack-row-dragging' : undefined}
             >
-              {canUpload && (
-                <td className="pack-order" aria-label={`Drag to reorder ${d.name}`}>
-                  {!jobRunning && <GripVertical className="pack-drag-handle" size={16} aria-label="Drag to reorder" />}
-                </td>
-              )}
+              <td className="pack-order" aria-label={`Drag to reorder ${d.name}`}>
+                <span title={!canUpload ? noPermission : jobRunning ? 'Locked while a processing job is running' : 'Drag to reorder'}>
+                  <GripVertical className={`pack-drag-handle${canUpload && !jobRunning ? '' : ' is-disabled'}`} size={16} aria-hidden />
+                </span>
+              </td>
               <td className="pack-index">{t.pack.indexOf(d) + 1}</td>
               <td>
                 {d.name}
@@ -378,23 +378,21 @@ export function PackSection({ t }: { t: Tender }) {
               </td>
               <td className="muted">{fileType(d.name)}</td>
               <td>
-                {canUpload && !jobRunning ? (
-                  <>
-                    <select
-                      value={d.role}
-                      aria-label={`Role of ${d.name}`}
-                      onChange={(e) => {
-                        dispatch({ type: 'correct-doc-role', tenderId: t.id, docId: d.id, role: e.target.value as PackDocRole });
-                        toast.push('success', 'Classification confirmed', `${d.name} is now "${e.target.value}"`);
-                      }}
-                    >
-                      {DOC_ROLES.map((r) => <option key={r}>{r}</option>)}
-                    </select>
-                    {d.roleUnconfirmed && (
-                      <div className="muted small">Suggested, please confirm</div>
-                    )}
-                  </>
-                ) : d.role}
+                <select
+                  value={d.role}
+                  aria-label={`Role of ${d.name}`}
+                  disabled={!canUpload || jobRunning}
+                  title={!canUpload ? noPermission : jobRunning ? 'Locked while a processing job is running' : undefined}
+                  onChange={(e) => {
+                    dispatch({ type: 'correct-doc-role', tenderId: t.id, docId: d.id, role: e.target.value as PackDocRole });
+                    toast.push('success', 'Classification confirmed', `${d.name} is now "${e.target.value}"`);
+                  }}
+                >
+                  {DOC_ROLES.map((r) => <option key={r}>{r}</option>)}
+                </select>
+                {d.roleUnconfirmed && (
+                  <div className="muted small">Suggested, please confirm</div>
+                )}
               </td>
               <td className="num" title={d.pages === 0 ? 'Known after text extraction' : undefined}>{d.pages === 0 ? '-' : d.pages}</td>
               <td>
@@ -403,15 +401,30 @@ export function PackSection({ t }: { t: Tender }) {
                   : <StatusPill value={d.status} />}
               </td>
               <td style={{ whiteSpace: 'nowrap' }}>
-                {d.status === 'Failed' && canUpload && !jobRunning && (
-                  <Button compact icon={RefreshCw} onClick={() => retryDoc(d)} disabled={retrying === d.id}>Retry</Button>
+                {d.status === 'Failed' && (
+                  <Button
+                    compact
+                    icon={RefreshCw}
+                    onClick={() => retryDoc(d)}
+                    disabled={!canUpload || jobRunning || retrying === d.id}
+                    title={!canUpload ? noPermission : jobRunning ? 'Locked while a processing job is running' : undefined}
+                  >
+                    Retry
+                  </Button>
                 )}{' '}
-                {canUpload && !jobRunning && <IconButton label={`Delete ${d.name}`} icon={Trash2} danger onClick={() => setDeleteDoc(d)} />}
+                <IconButton
+                  label={`Delete ${d.name}`}
+                  icon={Trash2}
+                  danger
+                  disabled={!canUpload || jobRunning}
+                  reason={!canUpload ? noPermission : 'Locked while a processing job is running'}
+                  onClick={() => setDeleteDoc(d)}
+                />
               </td>
             </tr>
           ))}
           {sortedPack.length === 0 && (
-            <tr><td colSpan={canUpload ? 8 : 7}>
+            <tr><td colSpan={8}>
               <EmptyState
                 icon={Inbox}
                 title="No documents yet"
@@ -934,6 +947,7 @@ export function ClausesSection({ t }: { t: Tender }) {
   const { state, dispatch } = useStore();
   const toast = useToast();
   const editable = canDo.editClauses(state.role) && !isTenderLocked(t);
+  const readOnlyReason = isTenderLocked(t) ? 'This tender is closed - clauses are read-only' : 'Your role views clauses only';
   const [cat, setCat] = useState('');
   const [confirmExport, setConfirmExport] = useState<null | 'excel' | 'word'>(null);
   // edits are held here until "Save changes" - one audit entry per save
@@ -1115,16 +1129,16 @@ export function ClausesSection({ t }: { t: Tender }) {
                 )}
               </td>
               <td>
-                {editable ? (
-                  <select
-                    value={pending[c.id]?.category ?? c.category}
-                    aria-label={`Category of clause ${c.number}`}
-                    className={pending[c.id]?.category !== undefined ? 'cell-changed' : undefined}
-                    onChange={(e) => edit(c, { category: e.target.value as ClauseCategory })}
-                  >
-                    {CATEGORIES.map((x) => <option key={x}>{x}</option>)}
-                  </select>
-                ) : <span className="badge badge-neutral">{c.category}</span>}
+                <select
+                  value={pending[c.id]?.category ?? c.category}
+                  aria-label={`Category of clause ${c.number}`}
+                  disabled={!editable}
+                  title={editable ? undefined : readOnlyReason}
+                  className={pending[c.id]?.category !== undefined ? 'cell-changed' : undefined}
+                  onChange={(e) => edit(c, { category: e.target.value as ClauseCategory })}
+                >
+                  {CATEGORIES.map((x) => <option key={x}>{x}</option>)}
+                </select>
               </td>
               <td className="muted small">
                 {c.sourceDoc} · p.{c.page}
@@ -1135,16 +1149,16 @@ export function ClausesSection({ t }: { t: Tender }) {
                 </div>
               </td>
               <td>
-                {editable ? (
-                  <select
-                    value={pending[c.id]?.compliance ?? c.compliance}
-                    aria-label={`Compliance for clause ${c.number}`}
-                    className={pending[c.id]?.compliance !== undefined ? 'cell-changed' : undefined}
-                    onChange={(e) => edit(c, { compliance: e.target.value as Clause['compliance'] })}
-                  >
-                    {COMPLIANCE_OPTIONS.map((o) => <option key={o}>{o}</option>)}
-                  </select>
-                ) : <StatusPill value={c.compliance} />}
+                <select
+                  value={pending[c.id]?.compliance ?? c.compliance}
+                  aria-label={`Compliance for clause ${c.number}`}
+                  disabled={!editable}
+                  title={editable ? undefined : readOnlyReason}
+                  className={pending[c.id]?.compliance !== undefined ? 'cell-changed' : undefined}
+                  onChange={(e) => edit(c, { compliance: e.target.value as Clause['compliance'] })}
+                >
+                  {COMPLIANCE_OPTIONS.map((o) => <option key={o}>{o}</option>)}
+                </select>
               </td>
               <td className={`desc${pending[c.id]?.response !== undefined ? ' cell-changed-td' : ''}`}>
                 <TextCell value={pending[c.id]?.response ?? c.response} editable={editable} placeholder="Add remark" onCommit={(v) => edit(c, { response: v })} />

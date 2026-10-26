@@ -1230,16 +1230,6 @@ export const REPOSITORY: RepoRecord[] = [...linkedRecords, ...generatedRecords].
   documents: r.documents ?? docsFor(r),
 }));
 
-// ---- Backup and redundancy (simulated) ---------------------------------------
-
-export const BACKUP = {
-  primary: { location: 'S3 ap-southeast-1 (tendrai-repository)', status: 'Healthy', objects: 1482, size: '9.6 GB' },
-  versioning: { status: 'Enabled', deleteProtection: 'Object lock (compliance mode, 90 days)' },
-  secondCopy: { location: 'S3 ap-southeast-2, separate AWS account (lps-backup)', status: 'Healthy', lag: '14 minutes' },
-  lastBackup: tsAt(0, '02:00'),
-  lastRestoreTest: { date: daysFromNow(-31), by: 'Kelyn Wong', result: 'Passed - 25 sampled files restored and checksum-verified' },
-};
-
 // ---- Audit log seed ---------------------------------------------------------
 // Derived from the records above so the log agrees with every list and detail
 // page: tender creation, uploads, processing runs, business case versions,

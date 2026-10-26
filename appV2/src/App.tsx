@@ -32,7 +32,6 @@ const CONFIRM_FROM_AUDIT = new Set([
   'Tender deleted',
   'Document reordered',
   'File downloaded',
-  'MSPO row count changed',
   'Certificate linked',
   'MSPO mapping reset to default',
 ]);
