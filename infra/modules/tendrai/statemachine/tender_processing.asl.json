@@ -1,0 +1,660 @@
+{
+  "Comment": "TendrAI tender processing. Input is the API's TenderJobMessage (api/src/lib/sqs.ts). Every Report*/Mark* step sends the status updater the same body as the API's POST /internal/jobs/:jobId/progress (api/src/routes/processing.ts): stage 1-6 = PROCESS_STAGES in api/src/types.ts. Only ids, S3 keys and counts flow between states, never document text.",
+  "StartAt": "UnwrapQueueMessage",
+  "States": {
+    "UnwrapQueueMessage": {
+      "Type": "Pass",
+      "Comment": "EventBridge Pipes delivers a batch (size 1) of transformed SQS records; keep the first.",
+      "InputPath": "$[0]",
+      "Next": "MarkReadingDocuments"
+    },
+
+    "MarkReadingDocuments": {
+      "Type": "Task",
+      "Comment": "Stage 1 - Read documents (text extraction).",
+      "Resource": "arn:${partition}:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${status_updater_arn}",
+        "Payload": {
+          "jobId.$": "$.jobId",
+          "mode.$": "$.mode",
+          "stage": 1,
+          "status": "running",
+          "executionArn.$": "$$.Execution.Id"
+        }
+      },
+      "ResultPath": null,
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "ExtractDocuments"
+    },
+
+    "ExtractDocuments": {
+      "Type": "Map",
+      "Comment": "One branch per document. A branch never fails the workflow: errors become {status: Failed, failReason} for that document only. Documents with textReady reuse their previous text result.",
+      "ItemsPath": "$.documents",
+      "ItemSelector": {
+        "tenderId.$": "$.tenderId",
+        "jobId.$": "$.jobId",
+        "document.$": "$$.Map.Item.Value"
+      },
+      "MaxConcurrency": 5,
+      "ResultPath": "$.extracted",
+      "ItemProcessor": {
+        "ProcessorConfig": { "Mode": "INLINE" },
+        "StartAt": "TextAlreadyExtracted",
+        "States": {
+          "TextAlreadyExtracted": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                "And": [
+                  { "Variable": "$.document.textReady", "BooleanEquals": true },
+                  { "Variable": "$.document.textPrefix", "IsString": true }
+                ],
+                "Next": "ReuseText"
+              }
+            ],
+            "Default": "RouteByFileType"
+          },
+
+          "ReuseText": {
+            "Type": "Pass",
+            "Parameters": {
+              "documentId.$": "$.document.documentId",
+              "status": "Text ready",
+              "textPrefix.$": "$.document.textPrefix"
+            },
+            "End": true
+          },
+
+          "RouteByFileType": {
+            "Type": "Choice",
+            "Choices": [
+              { "Variable": "$.document.fileType", "StringEquals": "pdf", "Next": "StartTextract" },
+              {
+                "Or": [
+                  { "Variable": "$.document.fileType", "StringEquals": "docx" },
+                  { "Variable": "$.document.fileType", "StringEquals": "doc" }
+                ],
+                "Next": "ExtractWord"
+              },
+              {
+                "Or": [
+                  { "Variable": "$.document.fileType", "StringEquals": "xlsx" },
+                  { "Variable": "$.document.fileType", "StringEquals": "xls" },
+                  { "Variable": "$.document.fileType", "StringEquals": "csv" }
+                ],
+                "Next": "ExtractExcel"
+              }
+            ],
+            "Default": "UnsupportedFileType"
+          },
+
+          "StartTextract": {
+            "Type": "Task",
+            "Comment": "Textract reads the PDF from S3 and writes the text result to extracted/<tenderId>/<documentId>/textract/<JobId>/, encrypted with the data CMK.",
+            "Resource": "arn:${partition}:states:::aws-sdk:textract:startDocumentTextDetection",
+            "Parameters": {
+              "DocumentLocation": {
+                "S3Object": {
+                  "Bucket": "${documents_bucket}",
+                  "Name.$": "$.document.key"
+                }
+              },
+              "OutputConfig": {
+                "S3Bucket": "${documents_bucket}",
+                "S3Prefix.$": "States.Format('${extracted_prefix}/{}/{}/textract', $.tenderId, $.document.documentId)"
+              },
+              "KMSKeyId": "${kms_key_arn}"
+            },
+            "ResultPath": "$.textract",
+            "Retry": [
+              {
+                "ErrorEquals": ["Textract.ProvisionedThroughputExceededException", "Textract.ThrottlingException", "Textract.LimitExceededException", "Textract.InternalServerError"],
+                "IntervalSeconds": 5,
+                "MaxAttempts": 5,
+                "BackoffRate": 2
+              }
+            ],
+            "Catch": [
+              { "ErrorEquals": ["Textract.ProvisionedThroughputExceededException", "Textract.ThrottlingException", "Textract.LimitExceededException", "Textract.InternalServerError"], "ResultPath": "$.error", "Next": "ExtractionServiceUnavailable" },
+              { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "ExtractionFailed" }
+            ],
+            "Next": "WaitForTextract"
+          },
+
+          "WaitForTextract": {
+            "Type": "Wait",
+            "Seconds": ${textract_poll_interval},
+            "Next": "GetTextractStatus"
+          },
+
+          "GetTextractStatus": {
+            "Type": "Task",
+            "Resource": "arn:${partition}:states:::aws-sdk:textract:getDocumentTextDetection",
+            "Parameters": {
+              "JobId.$": "$.textract.JobId",
+              "MaxResults": 1
+            },
+            "ResultSelector": {
+              "JobStatus.$": "$.JobStatus"
+            },
+            "ResultPath": "$.textractStatus",
+            "Retry": [
+              {
+                "ErrorEquals": ["Textract.ProvisionedThroughputExceededException", "Textract.ThrottlingException", "Textract.InternalServerError"],
+                "IntervalSeconds": 5,
+                "MaxAttempts": 5,
+                "BackoffRate": 2
+              }
+            ],
+            "Catch": [
+              { "ErrorEquals": ["Textract.ProvisionedThroughputExceededException", "Textract.ThrottlingException", "Textract.InternalServerError"], "ResultPath": "$.error", "Next": "ExtractionServiceUnavailable" },
+              { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "ExtractionFailed" }
+            ],
+            "Next": "IsTextractDone"
+          },
+
+          "IsTextractDone": {
+            "Type": "Choice",
+            "Choices": [
+              { "Variable": "$.textractStatus.JobStatus", "StringEquals": "SUCCEEDED", "Next": "TextractResult" },
+              { "Variable": "$.textractStatus.JobStatus", "StringEquals": "FAILED", "Next": "ExtractionFailed" },
+              { "Variable": "$.textractStatus.JobStatus", "StringEquals": "PARTIAL_SUCCESS", "Next": "ExtractionFailed" }
+            ],
+            "Default": "WaitForTextract"
+          },
+
+          "TextractResult": {
+            "Type": "Pass",
+            "Parameters": {
+              "documentId.$": "$.document.documentId",
+              "status": "Text ready",
+              "textPrefix.$": "States.Format('${extracted_prefix}/{}/{}/textract/{}', $.tenderId, $.document.documentId, $.textract.JobId)"
+            },
+            "End": true
+          },
+
+          "ExtractWord": {
+            "Type": "Task",
+            "Resource": "arn:${partition}:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${text_extractor_word_arn}",
+              "Payload": {
+                "tenderId.$": "$.tenderId",
+                "document.$": "$.document"
+              }
+            },
+            "ResultSelector": { "result.$": "$.Payload" },
+            "OutputPath": "$.result",
+            "Retry": [
+              {
+                "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 3,
+                "BackoffRate": 2
+              }
+            ],
+            "Catch": [
+              { "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"], "ResultPath": "$.error", "Next": "ExtractionServiceUnavailable" },
+              { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "ExtractionFailed" }
+            ],
+            "End": true
+          },
+
+          "ExtractExcel": {
+            "Type": "Task",
+            "Resource": "arn:${partition}:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${text_extractor_excel_arn}",
+              "Payload": {
+                "tenderId.$": "$.tenderId",
+                "document.$": "$.document"
+              }
+            },
+            "ResultSelector": { "result.$": "$.Payload" },
+            "OutputPath": "$.result",
+            "Retry": [
+              {
+                "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 3,
+                "BackoffRate": 2
+              }
+            ],
+            "Catch": [
+              { "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"], "ResultPath": "$.error", "Next": "ExtractionServiceUnavailable" },
+              { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "ExtractionFailed" }
+            ],
+            "End": true
+          },
+
+          "ExtractionServiceUnavailable": {
+            "Type": "Pass",
+            "Comment": "The API re-queues documents whose failReason contains 'service unavailable' on the next run.",
+            "Parameters": {
+              "documentId.$": "$.document.documentId",
+              "status": "Failed",
+              "failReason": "Text extraction service unavailable"
+            },
+            "End": true
+          },
+
+          "ExtractionFailed": {
+            "Type": "Pass",
+            "Parameters": {
+              "documentId.$": "$.document.documentId",
+              "status": "Failed",
+              "failReason": "Could not read text from this document"
+            },
+            "End": true
+          },
+
+          "UnsupportedFileType": {
+            "Type": "Pass",
+            "Parameters": {
+              "documentId.$": "$.document.documentId",
+              "status": "Failed",
+              "failReason": "Unsupported file type"
+            },
+            "End": true
+          }
+        }
+      },
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "ReportDocuments"
+    },
+
+    "ReportDocuments": {
+      "Type": "Task",
+      "Comment": "Per-document outcome of stage 1 (Text ready / Failed, pages, textPrefix).",
+      "Resource": "arn:${partition}:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${status_updater_arn}",
+        "Payload": {
+          "jobId.$": "$.jobId",
+          "mode.$": "$.mode",
+          "documents.$": "$.extracted"
+        }
+      },
+      "ResultPath": null,
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "ExtractOnly"
+    },
+
+    "ExtractOnly": {
+      "Type": "Choice",
+      "Comment": "retry-document re-reads one file and stops; the tender is flagged out of date instead of re-analysed (same as the UI).",
+      "Choices": [{ "Variable": "$.mode", "StringEquals": "retry-document", "Next": "MarkCompleted" }],
+      "Default": "NormalizeText"
+    },
+
+    "NormalizeText": {
+      "Type": "Task",
+      "Comment": "Merge the text of every document with status 'Text ready' into normalized/<tenderId>/<jobId>/tender.json.",
+      "Resource": "arn:${partition}:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${text_normalizer_arn}",
+        "Payload": {
+          "tenderId.$": "$.tenderId",
+          "jobId.$": "$.jobId",
+          "documents.$": "$.extracted"
+        }
+      },
+      "ResultSelector": {
+        "normalizedKey.$": "$.Payload.normalizedKey",
+        "documentCount.$": "$.Payload.documentCount"
+      },
+      "ResultPath": "$.normalized",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "AnyTextRead"
+    },
+
+    "AnyTextRead": {
+      "Type": "Choice",
+      "Choices": [{ "Variable": "$.normalized.documentCount", "NumericGreaterThan": 0, "Next": "MarkOverview" }],
+      "Default": "NoTextRead"
+    },
+
+    "NoTextRead": {
+      "Type": "Pass",
+      "Parameters": { "Error": "NoDocumentText", "Cause": "No document text could be read" },
+      "ResultPath": "$.error",
+      "Next": "MarkFailed"
+    },
+
+    "MarkOverview": {
+      "Type": "Task",
+      "Comment": "Stage 2 - Build tender overview.",
+      "Resource": "arn:${partition}:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${status_updater_arn}",
+        "Payload": { "jobId.$": "$.jobId", "mode.$": "$.mode", "stage": 2 }
+      },
+      "ResultPath": null,
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "AnalyseOverview"
+    },
+
+    "AnalyseOverview": {
+      "Type": "Task",
+      "Resource": "arn:${partition}:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${analyser_arn}",
+        "Payload": { "tenderId.$": "$.tenderId", "jobId.$": "$.jobId", "task": "overview", "normalizedKey.$": "$.normalized.normalizedKey" }
+      },
+      "ResultSelector": { "resultKey.$": "$.Payload.resultKey" },
+      "ResultPath": "$.analysis.overview",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "MarkSubmissionRequirements"
+    },
+
+    "MarkSubmissionRequirements": {
+      "Type": "Task",
+      "Comment": "Stage 3 - Extract submission requirements.",
+      "Resource": "arn:${partition}:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${status_updater_arn}",
+        "Payload": { "jobId.$": "$.jobId", "mode.$": "$.mode", "stage": 3 }
+      },
+      "ResultPath": null,
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "AnalyseSubmissionRequirements"
+    },
+
+    "AnalyseSubmissionRequirements": {
+      "Type": "Task",
+      "Resource": "arn:${partition}:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${analyser_arn}",
+        "Payload": { "tenderId.$": "$.tenderId", "jobId.$": "$.jobId", "task": "submissionRequirements", "normalizedKey.$": "$.normalized.normalizedKey" }
+      },
+      "ResultSelector": { "resultKey.$": "$.Payload.resultKey" },
+      "ResultPath": "$.analysis.submissionRequirements",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "MarkQualificationRequirements"
+    },
+
+    "MarkQualificationRequirements": {
+      "Type": "Task",
+      "Comment": "Stage 4 - Extract qualification requirements.",
+      "Resource": "arn:${partition}:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${status_updater_arn}",
+        "Payload": { "jobId.$": "$.jobId", "mode.$": "$.mode", "stage": 4 }
+      },
+      "ResultPath": null,
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "AnalyseQualificationRequirements"
+    },
+
+    "AnalyseQualificationRequirements": {
+      "Type": "Task",
+      "Resource": "arn:${partition}:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${analyser_arn}",
+        "Payload": { "tenderId.$": "$.tenderId", "jobId.$": "$.jobId", "task": "qualificationRequirements", "normalizedKey.$": "$.normalized.normalizedKey" }
+      },
+      "ResultSelector": { "resultKey.$": "$.Payload.resultKey" },
+      "ResultPath": "$.analysis.qualificationRequirements",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "MarkClauses"
+    },
+
+    "MarkClauses": {
+      "Type": "Task",
+      "Comment": "Stage 5 - Extract clauses.",
+      "Resource": "arn:${partition}:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${status_updater_arn}",
+        "Payload": { "jobId.$": "$.jobId", "mode.$": "$.mode", "stage": 5 }
+      },
+      "ResultPath": null,
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "AnalyseClauses"
+    },
+
+    "AnalyseClauses": {
+      "Type": "Task",
+      "Resource": "arn:${partition}:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${analyser_arn}",
+        "Payload": { "tenderId.$": "$.tenderId", "jobId.$": "$.jobId", "task": "clauses", "normalizedKey.$": "$.normalized.normalizedKey" }
+      },
+      "ResultSelector": { "resultKey.$": "$.Payload.resultKey" },
+      "ResultPath": "$.analysis.clauses",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "MarkComplianceTable"
+    },
+
+    "MarkComplianceTable": {
+      "Type": "Task",
+      "Comment": "Stage 6 - Build compliance table.",
+      "Resource": "arn:${partition}:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${status_updater_arn}",
+        "Payload": { "jobId.$": "$.jobId", "mode.$": "$.mode", "stage": 6 }
+      },
+      "ResultPath": null,
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "LoadResults"
+    },
+
+    "LoadResults": {
+      "Type": "Task",
+      "Comment": "Read the four analysis results from S3 and write tenders.overview, checklist_items, qualifications and clauses (compliance table) to RDS.",
+      "Resource": "arn:${partition}:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${result_loader_arn}",
+        "Payload": {
+          "tenderId.$": "$.tenderId",
+          "jobId.$": "$.jobId",
+          "resultKeys": {
+            "overview.$": "$.analysis.overview.resultKey",
+            "submissionRequirements.$": "$.analysis.submissionRequirements.resultKey",
+            "qualificationRequirements.$": "$.analysis.qualificationRequirements.resultKey",
+            "clauses.$": "$.analysis.clauses.resultKey"
+          }
+        }
+      },
+      "ResultSelector": {
+        "clauses.$": "$.Payload.clauses",
+        "checklist.$": "$.Payload.checklist",
+        "qualifications.$": "$.Payload.qualifications"
+      },
+      "ResultPath": "$.results",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "MarkCompletedWithResults"
+    },
+
+    "MarkCompletedWithResults": {
+      "Type": "Task",
+      "Resource": "arn:${partition}:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${status_updater_arn}",
+        "Payload": {
+          "jobId.$": "$.jobId",
+          "mode.$": "$.mode",
+          "status": "completed",
+          "results.$": "$.results"
+        }
+      },
+      "ResultPath": null,
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "Done"
+    },
+
+    "MarkCompleted": {
+      "Type": "Task",
+      "Comment": "retry-document completion (no analysis results).",
+      "Resource": "arn:${partition}:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${status_updater_arn}",
+        "Payload": {
+          "jobId.$": "$.jobId",
+          "mode.$": "$.mode",
+          "status": "completed"
+        }
+      },
+      "ResultPath": null,
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "Done"
+    },
+
+    "Done": {
+      "Type": "Succeed"
+    },
+
+    "MarkFailed": {
+      "Type": "Task",
+      "Comment": "Only the error name goes to the API (never the cause, which can echo inputs).",
+      "Resource": "arn:${partition}:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${status_updater_arn}",
+        "Payload": {
+          "jobId.$": "$.jobId",
+          "mode.$": "$.mode",
+          "status": "failed",
+          "error.$": "States.Format('Processing failed ({})', $.error.Error)"
+        }
+      },
+      "ResultPath": null,
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.statusUpdateError", "Next": "WorkflowFailed" }],
+      "Next": "WorkflowFailed"
+    },
+
+    "WorkflowFailed": {
+      "Type": "Fail",
+      "Error": "TenderProcessingFailed",
+      "Cause": "One of the processing steps failed; see $.error in the execution history."
+    }
+  }
+}
