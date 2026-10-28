@@ -80,6 +80,14 @@ const billing = (count: number, amount: number, last?: number): BcBilling[] =>
     amount: i === count - 1 && last !== undefined ? last : amount,
   }));
 
+/** Fictitious Summary-tab cells of a mock workbook, at the template's cells:
+ *  B6 TCV, B14 direct cost, B15 internal labour, B24 indirect cost, B50 EBITDA,
+ *  C50 EBITDA % (the template's =B50/B6, a fraction). The app reads its
+ *  headline figures from these via the MSPO "Business case figures" mapping. */
+const summaryCells = (tcv: number, direct: number, labour: number, indirect: number, ebitda: number) => ({
+  Summary: { B6: tcv, B14: direct, B15: labour, B24: indirect, B50: ebitda, C50: ebitda / tcv },
+});
+
 /** v1: consistent totals, but one product is assigned to a quote line that
  *  does not exist (QL rule fails, warning). */
 const v1: BcVersion = {
@@ -93,6 +101,7 @@ const v1: BcVersion = {
     products: products([{ id: 'p5', ql: 4 }]), // QL4 does not exist
     resources: resources(),
     billing: billing(12, 445833, 445837),
+    cells: summaryCells(5350000, 4885205, 2126205, 195408, 269387),
   },
 };
 
@@ -109,6 +118,7 @@ const v2: BcVersion = {
     products: products(),
     resources: resources([{ id: 'r5', dayRate: 0, total: 0 }]),
     billing: billing(11, 437727, 437730), // sums to 4,815,000 - short of CCB
+    cells: summaryCells(5350000, 4659000, 1900000, 186360, 504640),
   },
 };
 
@@ -125,6 +135,7 @@ const v3: BcVersion = {
     products: products([{ id: 'p2', unitCost: 1500, total: 780000 }, { id: 'p5', ql: 3 }]),
     resources: resources([{ id: 'r3', fyMandays: [259, 222, 166.5, 0], mandays: 647.5, total: 414400 }]),
     billing: billing(12, 445833, 445837),
+    cells: summaryCells(5350000, 4849685, 2090685, 193987, 306328),
   },
 };
 // keep v3 header consistent with the p2/r3 changes
@@ -449,6 +460,7 @@ const t2: Tender = {
           { id: 'r2', ql: 1, role: 'Technical Engineer', grade: '4', team: 'Insys - Non-cloud - SG', mandays: 1860, dayRate: 560, total: 1041600 },
         ],
         billing: billing(8, 267500),
+        cells: summaryCells(2140000, 1900000, 1480000, 76000, 164000),
       },
     },
   ],

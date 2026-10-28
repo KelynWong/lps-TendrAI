@@ -183,6 +183,9 @@ export interface BcVersionData {
   products: BcProduct[];
   resources: BcResource[];
   billing: BcBilling[];
+  /** raw numeric cells captured at upload, tab -> cell ref -> value (same shape
+   *  as the API's bc_versions.cells); headline figures are read from here */
+  cells?: Record<string, Record<string, number>>;
 }
 
 export interface BcVersion {

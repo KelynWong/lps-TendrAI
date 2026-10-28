@@ -18,7 +18,7 @@ import {
 import * as XLSX from 'xlsx';
 import type { BcVersion, BcVersionData, Tender } from '../types';
 import { canDo } from '../config';
-import { dateShort, money, pct, ts } from '../lib/format';
+import { dateShort, pct, ts } from '../lib/format';
 import { useStore } from '../state/store';
 import { TextCell } from './common';
 import { failedChecks, ruleTabs, runFinalChecks, type CheckRun } from '../rules/finalChecks';
@@ -50,7 +50,7 @@ import { ProgressStages } from './ProgressStages';
 import { SpreadsheetDocumentViewer, useCitation } from '../ui/citation';
 import { isTenderLocked } from './rfp';
 import { UploadDialog, type StagedFile } from './upload';
-import { bcFigures } from '../lib/figures';
+import { bcFigures, figureMoney, figurePct, workbookCell } from '../lib/figures';
 
 const latest = (t: Tender): BcVersion | undefined => t.bcVersions[t.bcVersions.length - 1];
 
@@ -238,14 +238,14 @@ function MspoPanel({ t, data, runs, version }: { t: Tender; data: BcVersionData;
   };
   const periods = fiscalPeriods(data).slice(0, fyCount);
   const breakdown = resourceBreakdown(data, fill);
-  const figures = bcFigures(data);
-  /** the headline figures as they read in this version */
+  const figures = bcFigures(data, state.mspoDefaults, t);
+  /** the headline figures as they read in this version, from the mapped cells */
   const figureValue: Record<string, string> = {
-    TCV: money(figures.tcv),
-    'Indirect cost': money(figures.indirect),
-    'Direct cost': money(figures.direct),
-    EBITDA: money(figures.ebitda),
-    'EBITDA (%)': pct(figures.ebitdaPct),
+    TCV: figureMoney(figures.tcv),
+    'Indirect cost': figureMoney(figures.indirect),
+    'Direct cost': figureMoney(figures.direct),
+    EBITDA: figureMoney(figures.ebitda),
+    'EBITDA (%)': figurePct(figures.ebitdaPct),
   };
 
   const dl = (plan: MspoPlan) => {
@@ -578,9 +578,32 @@ function ResourceSplitTable({ breakdown, daysPerMonth }: { breakdown: ReturnType
 
 // ---- Best-effort Excel parsing for uploads -----------------------------------
 
-async function parseUpload(file: File, fallback: BcVersionData): Promise<{ data: BcVersionData; parsed: boolean }> {
+/** Raw numeric cells of the business case tabs (tab -> ref -> value); same
+ *  limits as captureCells in api/src/domain/bcWorkbook.ts. */
+function captureCells(wb: XLSX.WorkBook): Record<string, Record<string, number>> {
+  const out: Record<string, Record<string, number>> = {};
+  for (const name of ['Summary', 'Basic Info', 'Product Plan', 'Resource Plan', 'Labour Inputs', 'Cash Flow', 'Working']) {
+    const ws = wb.Sheets[name];
+    if (!ws || !ws['!ref']) continue;
+    const range = XLSX.utils.decode_range(ws['!ref']);
+    const tab: Record<string, number> = {};
+    for (let r = range.s.r; r <= Math.min(range.e.r, 400); r++) {
+      for (let c = range.s.c; c <= Math.min(range.e.c, 60); c++) {
+        const ref = XLSX.utils.encode_cell({ r, c });
+        const v = ws[ref]?.v;
+        if (typeof v === 'number') tab[ref] = v;
+      }
+    }
+    out[name] = tab;
+  }
+  return out;
+}
+
+/** tcvCell: the mapped TCV cell ("Business case figures" on the MSPO mapping page). */
+async function parseUpload(file: File, fallback: BcVersionData, tcvCell?: { tab?: string; from?: string }): Promise<{ data: BcVersionData; parsed: boolean }> {
   try {
     const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+    const cells = captureCells(wb);
     const prodSheet = wb.Sheets['Product Plan'];
     const resSheet = wb.Sheets['Resource Plan'];
     if (!prodSheet || !resSheet) throw new Error('expected sheets missing');
@@ -612,12 +635,14 @@ async function parseUpload(file: File, fallback: BcVersionData): Promise<{ data:
       data: {
         header: {
           ...fallback.header,
+          tcv: workbookCell({ ...fallback, cells }, tcvCell?.tab, tcvCell?.from) ?? fallback.header.tcv,
           productTotal: products.reduce((a, p) => a + p.total, 0),
           labourTotal: resources.reduce((a, r) => a + r.total, 0),
         },
         products: products.length ? products : fallback.products,
         resources: resources.length ? resources : fallback.resources,
         billing: fallback.billing,
+        cells,
       },
     };
   } catch {
@@ -806,7 +831,8 @@ function UploadZone({ t }: { t: Tender }) {
       fallbackBase.products[0].total = fallbackBase.products[0].qty * fallbackBase.products[0].unitCost;
       fallbackBase.header.productTotal = fallbackBase.products.reduce((a: number, p: { total: number }) => a + p.total, 0);
     }
-    const { data, parsed } = await parseUpload(file, fallbackBase);
+    const tcvCell = effectivePlan(state.mspoDefaults, t, 'figures').find((e) => e.target === 'TCV');
+    const { data, parsed } = await parseUpload(file, fallbackBase, tcvCell);
     const version: BcVersion = {
       v: (lv?.v ?? 0) + 1,
       uploadedBy: state.user?.name ?? 'Unknown',
@@ -915,7 +941,8 @@ export function DrbSummarySection({ t }: { t: Tender }) {
   const runs = runFinalChecks(lv.data, state.rules);
   const failed = failedChecks(runs);
   const d = lv.data;
-  const { direct, indirect, ebitda, ebitdaPct } = bcFigures(d);
+  const { tcv, direct, indirect, ebitda, ebitdaPct, source } = bcFigures(d, state.mspoDefaults, t);
+  const from = (s?: string) => <div className="muted small">{s ? `Business case ${s}` : 'Not mapped'}</div>;
 
   return (
     <section>
@@ -929,10 +956,10 @@ export function DrbSummarySection({ t }: { t: Tender }) {
         </Banner>
       )}
       <div className="kpi-row">
-        <div className="kpi"><span>TCV (contract value)</span><b>{money(d.header.tcv)}</b></div>
-        <div className="kpi"><span>Direct cost</span><b>{money(direct)}</b><div className="muted small">Product + internal labour</div></div>
-        <div className="kpi"><span>Indirect cost</span><b>{money(indirect)}</b><div className="muted small">4% contingency (estimate)</div></div>
-        <div className="kpi"><span>EBITDA</span><b className={ebitda >= 0 ? 'pos' : 'neg'}>{money(ebitda)}</b><div className="muted small">{pct(ebitdaPct)} of TCV</div></div>
+        <div className="kpi"><span>TCV (contract value)</span><b>{figureMoney(tcv)}</b>{from(source.tcv)}</div>
+        <div className="kpi"><span>Direct cost</span><b>{figureMoney(direct)}</b>{from(source.direct)}</div>
+        <div className="kpi"><span>Indirect cost</span><b>{figureMoney(indirect)}</b>{from(source.indirect)}</div>
+        <div className="kpi"><span>EBITDA</span><b className={ebitda !== null && ebitda < 0 ? 'neg' : 'pos'}>{figureMoney(ebitda)}</b><div className="muted small">{figurePct(ebitdaPct)} of TCV ({source.ebitdaPct ?? 'not mapped'})</div></div>
         <div className="kpi"><span>Final Check</span><b className={failed.length ? 'neg' : 'pos'}>{failed.length ? `${failed.length} failed` : 'All passed'}</b></div>
       </div>
       {failed.length > 0 && (

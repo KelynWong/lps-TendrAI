@@ -1,6 +1,8 @@
 # LPS TendrAI — Demo Guide
 
-Run the app with `cd app && npm run dev` → http://localhost:5173
+> **Legacy V1 POC — superseded.** This guide describes the frozen V1 proof of concept, where the AI drafted a costed business case. The current product (`frontend/`) does not: AI never generates costs or business cases. For the current app see [docs/USER_GUIDE.md](../../../docs/USER_GUIDE.md).
+
+Run the app with `cd frontend/legacy/app-v1 && npm run dev` → http://localhost:5173
 
 ## Demo accounts
 
@@ -117,7 +119,7 @@ Password for **all** accounts: `Demo2026!`
 
 The web app is a proof of concept for the workflow and UI: uploads are accepted but the
 "generated" business case is a prepared draft, and the form-fill is simulated. The
-production design behind it is real and sits in `terraform/`: Cognito sign-in (the login
+production design behind it is real and sits in `infra/`: Cognito sign-in (the login
 screen mimics its hosted UI), documents in encrypted S3, Titan Text Embeddings V2 +
 pgvector retrieval, Bedrock generation — all in ap-southeast-1, nothing public except
 the WAF-fronted load balancer.

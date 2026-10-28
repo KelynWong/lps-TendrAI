@@ -10,7 +10,7 @@ import { Button, Banner, ConfirmDialog, IconButton, TabsBar } from '../ui/ui';
 import { TenderPackSection, useJobSim, docCounts } from '../components/rfp';
 import { BcSection, DrbSummarySection, DrbBcSection } from '../components/bc';
 import { money } from '../lib/format';
-import { bcFigures, latestParsedBc } from '../lib/figures';
+import { bcFigures, figureMoney, latestParsedBc } from '../lib/figures';
 import { canDo } from '../config';
 import { useToast } from '../ui/toast';
 import { dateShort, ts } from '../lib/format';
@@ -291,7 +291,7 @@ function TenderList() {
   const financials = canDo.viewFinancials(state.role);
   const figuresOf = (t: Tender) => {
     const v = latestParsedBc(t);
-    return v ? bcFigures(v.data) : undefined;
+    return v ? bcFigures(v.data, state.mspoDefaults, t) : undefined;
   };
 
   const colAcc = {
@@ -396,10 +396,10 @@ function TenderList() {
                   <td><StatusPill value={t.statusReason} /></td>
                   {financials && (
                     <>
-                      <td className="num">{fig ? money(fig.tcv) : '-'}</td>
-                      <td className="num">{fig ? money(fig.indirect) : '-'}</td>
-                      <td className="num">{fig ? money(fig.direct) : '-'}</td>
-                      <td className={`num ${fig && fig.ebitda < 0 ? 'neg' : ''}`}>{fig ? money(fig.ebitda) : '-'}</td>
+                      <td className="num">{figureMoney(fig?.tcv ?? null)}</td>
+                      <td className="num">{figureMoney(fig?.indirect ?? null)}</td>
+                      <td className="num">{figureMoney(fig?.direct ?? null)}</td>
+                      <td className={`num ${fig?.ebitda != null && fig.ebitda < 0 ? 'neg' : ''}`}>{figureMoney(fig?.ebitda ?? null)}</td>
                     </>
                   )}
                   {!financials && <td>

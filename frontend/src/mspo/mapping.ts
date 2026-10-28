@@ -102,8 +102,8 @@ export const BILLING_FIELD_MAP: FieldMapEntry[] = [
  *  are not part of a plan download. */
 export const FIGURES_FIELD_MAP: FieldMapEntry[] = [
   W('TCV', 'Summary', 'B6', 'single'),
-  W('Indirect cost', 'Summary', 'B14', 'single'),
-  W('Direct cost', 'Summary', 'B24', 'single'),
+  W('Indirect cost', 'Summary', 'B24', 'single'),
+  W('Direct cost', 'Summary', 'B14', 'single'),
   W('EBITDA', 'Summary', 'B50', 'single'),
   W('EBITDA (%)', 'Summary', 'C50', 'single'),
 ];

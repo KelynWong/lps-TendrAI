@@ -63,7 +63,7 @@ const blankRule = (): RuleDef => ({
   enabled: true,
   kind: 'compare',
   left: { tab: 'Basic Info', ref: 'C31:C42' },
-  right: { tab: 'Summary', ref: 'B5' },
+  right: { tab: 'Summary', ref: 'B6' },
   tolerance: 1,
 });
 
@@ -251,7 +251,7 @@ function RulesTab({ editable }: { editable: boolean }) {
                         name="rule-kind"
                         checked={draft.kind === k}
                         onChange={() => set(
-                          k === 'compare' ? { kind: k, left: { tab: 'Basic Info', ref: 'C31:C42' }, right: { tab: 'Summary', ref: 'B5' }, tolerance: 1 }
+                          k === 'compare' ? { kind: k, left: { tab: 'Basic Info', ref: 'C31:C42' }, right: { tab: 'Summary', ref: 'B6' }, tolerance: 1 }
                             : k === 'range' ? { kind: k, target: { tab: 'Summary', ref: 'C22' }, min: undefined, max: undefined }
                               : { kind: k, target: { tab: 'Labour Inputs', ref: 'F4:F23' }, op: '>', value: 0, value2: undefined },
                         )}

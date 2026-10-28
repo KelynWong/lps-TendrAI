@@ -30,8 +30,8 @@ type Fmt = 'money' | 'pct' | 'number';
 /** Cells of the business case template the demo can read. The live system
  *  reads any cell from the uploaded workbook. Ranges return one value per line. */
 export const CELL_CATALOG: { tab: string; ref: string; label: string; fmt: Fmt; get: (d: BcVersionData) => number | number[] }[] = [
-  { tab: 'Summary', ref: 'B5', label: 'Contract value (TCV/CCB)', fmt: 'money', get: (d) => d.header.tcv },
-  { tab: 'Summary', ref: 'B14', label: 'Product cost (stated)', fmt: 'money', get: (d) => d.header.productTotal },
+  { tab: 'Summary', ref: 'B6', label: 'Contract value (TCV/CCB)', fmt: 'money', get: (d) => d.header.tcv },
+  { tab: 'Summary', ref: 'B16:B20', label: 'Product cost (stated, product-category rows)', fmt: 'money', get: (d) => d.header.productTotal },
   { tab: 'Summary', ref: 'B15', label: 'Internal labour (stated)', fmt: 'money', get: (d) => d.header.labourTotal },
   { tab: 'Summary', ref: 'C22', label: 'Margin %', fmt: 'pct', get: (d) => d.header.marginPct },
   { tab: 'Basic Info', ref: 'D9', label: 'Project duration (months)', fmt: 'number', get: (d) => d.header.durationMonths },
@@ -206,9 +206,9 @@ const C = (tab: string, ref: string): CellRef => ({ tab, ref });
 
 /** The rule set shipped with the system (mirrors the Excel template's Final Check list). */
 export const DEFAULT_RULES: RuleDef[] = [
-  { id: 'billing-equals-ccb', enabled: true, kind: 'compare', left: C('Basic Info', 'C31:C42'), right: C('Summary', 'B5'), tolerance: 1, severity: 'error',
+  { id: 'billing-equals-ccb', enabled: true, kind: 'compare', left: C('Basic Info', 'C31:C42'), right: C('Summary', 'B6'), tolerance: 1, severity: 'error',
     name: 'Billing plan equals CCB', description: 'The sum of the billing plan must equal the contract value (CCB/TCV) stated on the Summary tab.' },
-  { id: 'product-total-reconciles', enabled: true, kind: 'compare', left: C('Product Plan', 'G6:G25'), right: C('Summary', 'B14'), tolerance: 1, severity: 'error',
+  { id: 'product-total-reconciles', enabled: true, kind: 'compare', left: C('Product Plan', 'G6:G25'), right: C('Summary', 'B16:B20'), tolerance: 1, severity: 'error',
     name: 'Product Plan reconciles with Summary', description: 'The Product Plan line totals must add up to the product cost stated on the Summary tab.' },
   { id: 'labour-total-reconciles', enabled: true, kind: 'compare', left: C('Resource Plan', 'G8:G27'), right: C('Summary', 'B15'), tolerance: 1, severity: 'error',
     name: 'Resource Plan reconciles with Summary', description: 'The Resource Plan line totals must add up to the internal labour cost stated on the Summary tab.' },
