@@ -30,9 +30,11 @@ import {
 import * as XLSX from 'xlsx';
 import type { Clause, ClauseCategory, PackDoc, PackDocRole, Tender } from '../types';
 import { PROCESS_STAGES } from '../types';
+import { confidenceLevel, confidenceText } from '../lib/confidence';
 import { canDo } from '../config';
 import { useStore } from '../state/store';
 import { useCitation, type CitationInfo } from '../ui/citation';
+import { tenderDocumentUrl } from '../data/mockDocuments';
 import { LibraryUpload } from './library';
 import { writeXlsxWithDropdowns } from '../lib/xlsxDropdown';
 import { UploadDialog, type StagedFile } from './upload';
@@ -45,15 +47,6 @@ import { useLeaveGuard, useUnsavedChanges } from '../lib/leaveGuard';
 const DOC_ROLES: PackDocRole[] = ['General Requirements', 'Technical Specification', 'Commercial Conditions', 'Legal Conditions', 'Forms and Annexes', 'Unclassified'];
 const CATEGORIES: ClauseCategory[] = ['Commercial', 'Technical', 'Legal', 'Finance', 'HR'];
 const COMPLIANCE_OPTIONS: Clause['compliance'][] = ['Unset', 'Comply', 'Partially comply', 'Do not comply', 'Clarify'];
-
-/** Demo files exist for two of the mock documents; everything else renders the
- *  built-in page viewer (with page navigation) instead of a stale stand-in. */
-const demoSourceUrl = (sourceDoc: string) => {
-  const s = sourceDoc.toLowerCase();
-  if (s === 'general requirements.pdf') return '/mock-documents/general-requirements.pdf';
-  if (s === 'technical specification.pdf') return '/mock-documents/technical-specification.pdf';
-  return undefined;
-};
 
 /** Builds the source-viewer citation for an extracted item: document, clause,
  *  page, and a few sentences either side of the passage. Neighbouring text
@@ -92,7 +85,9 @@ function sourceCitation(
     docId: item.sourceDoc,
     title: item.sourceDoc,
     fileName: item.sourceDoc,
-    documentUrl: demoSourceUrl(item.sourceDoc),
+    // the stored file (PDF, Word or Excel); documents uploaded in this demo
+    // session have none and use the built-in page preview
+    documentUrl: tenderDocumentUrl(t.id, item.sourceDoc),
     similarity: 1,
     source: 'tender',
     tab: `Clause ${item.clause} · page ${page}`,
@@ -551,7 +546,7 @@ export function TenderPackSection({ t }: { t: Tender }) {
           { key: 'upload', label: 'Documents' },
           { key: 'checklist', label: 'Submission', disabled: !extractionAvailable, disabledHint: lockedHint },
           { key: 'quals', label: 'Qualification', disabled: !extractionAvailable, disabledHint: lockedHint },
-          { key: 'clauses', label: 'Clauses', disabled: !extractionAvailable, disabledHint: lockedHint },
+          { key: 'clauses', label: 'Compliance', disabled: !extractionAvailable, disabledHint: lockedHint },
         ]}
         active={tab}
         onChange={(k) => requestLeave(() => setTab(k))}
@@ -559,7 +554,7 @@ export function TenderPackSection({ t }: { t: Tender }) {
         stickyBelow
       />
       {tab === 'upload' && <PackSection t={t} />}
-      {tab === 'checklist' && <SubmissionSection t={t} />}
+      {tab === 'checklist' && <SubmissionSection t={t} onOpenTab={(k) => requestLeave(() => setTab(k))} />}
       {tab === 'quals' && <QualSection t={t} />}
       {tab === 'clauses' && <ClausesSection t={t} />}
     </section>
@@ -572,7 +567,16 @@ export function TenderPackSection({ t }: { t: Tender }) {
 // matches from the library automatically, and the user can change the pick.
 // Where a template is selected, AI can generate a first draft from it.
 
-export function SubmissionSection({ t }: { t: Tender }) {
+/** Which tab prepares a submission document: the compliance table comes from
+ *  the Compliance tab, CVs, certifications and references are the evidence on
+ *  the Qualification tab. Inferred from the document's name. */
+function preparedIn(item: string): 'clauses' | 'quals' | null {
+  if (/complian/i.test(item)) return 'clauses';
+  if (/\bCVs?\b|certification|ISO \d|track record|reference|key personnel/i.test(item)) return 'quals';
+  return null;
+}
+
+export function SubmissionSection({ t, onOpenTab }: { t: Tender; onOpenTab?: (tab: 'clauses' | 'quals') => void }) {
   const { state, dispatch } = useStore();
   const toast = useToast();
   const { show } = useCitation();
@@ -722,7 +726,25 @@ export function SubmissionSection({ t }: { t: Tender }) {
             const reason = matchReason(k);
             return (
               <tr key={k.id}>
-                <td><b>{k.item}</b></td>
+                <td>
+                  <b>{k.item}</b>
+                  {onOpenTab && preparedIn(k.item) === 'clauses' && (
+                    <div className="small">
+                      <button className="link-btn" type="button" onClick={() => onOpenTab('clauses')}>
+                        Prepared on the Compliance tab
+                      </button>
+                      <span className="muted"> · {t.clauses.filter((c) => c.compliance !== 'Unset').length} of {t.clauses.length} clauses assessed</span>
+                    </div>
+                  )}
+                  {onOpenTab && preparedIn(k.item) === 'quals' && (
+                    <div className="small">
+                      <button className="link-btn" type="button" onClick={() => onOpenTab('quals')}>
+                        Evidence on the Qualification tab
+                      </button>
+                      <span className="muted"> · {t.quals.filter((q) => q.evidence).length} of {t.quals.length} requirements have evidence linked</span>
+                    </div>
+                  )}
+                </td>
                 <td className="muted">{k.format}</td>
                 <td className="muted small">
                   {k.sourceDoc} · clause {k.clause} · p.{citedPage(t, k.sourceDoc, k.clause)}
@@ -1139,6 +1161,15 @@ export function ClausesSection({ t }: { t: Tender }) {
                 >
                   {CATEGORIES.map((x) => <option key={x}>{x}</option>)}
                 </select>
+                {c.categoryConfidence !== undefined && !c.reviewedBy && pending[c.id]?.category === undefined && (
+                  confidenceLevel(c.categoryConfidence, 'classification') === 'Low' ? (
+                    <div className="small warn" title="The AI was unsure about this category - please check it">
+                      <AlertTriangle size={12} aria-hidden /> AI {confidenceText(c.categoryConfidence, 'classification')} - check
+                    </div>
+                  ) : (
+                    <div className="small muted" title="How sure the AI is about the category it chose">AI {confidenceText(c.categoryConfidence, 'classification')}</div>
+                  )
+                )}
               </td>
               <td className="muted small">
                 {c.sourceDoc} · p.{c.page}

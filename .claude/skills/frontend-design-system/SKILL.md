@@ -7,7 +7,7 @@ description: Use when building or changing any UI in frontend/src (pages, compon
 
 Rules from `CLAUDE.md` apply: use existing tokens and shared components only. No new colours,
 fonts or one-off styles. If a token or component is missing, stop and ask. Do not touch
-`frontend/legacy/app-v1/` (frozen V1 POC) unless asked. Verify with `npm --prefix frontend run build`
+`frontend/legacy/app-v1/` (frozen V1 POC) or `frontend/legacy/app-v2/` (frozen V2) unless asked. Verify with `npm --prefix frontend run build`
 (runs `tsc -b`; there is no linter or test runner).
 
 ## Tokens (`frontend/src/theme/tokens.css`)
@@ -42,6 +42,7 @@ Do not copy the hard-coded hex values in `.pill-draft`, `.pill-active`, `.pill-c
 `frontend/src/components/`
 - `common.tsx`: `useSort`, `SortTh`, `useColFilters`, `PAGE_SIZES`, `usePagedTable`, `Pager`, `TextCell`, `StatusPill`.
 - `bc.tsx`: `ChecksPanel`, `FailedChecksList`, `BcSection`, `DrbSummarySection`, `DrbBcSection`.
+- `../businessCase/`: the V3 business case workspace. `Workspace.tsx` (sticky summary bar, seven workbook tabs, save bar), `tabs/*.tsx`, `cells.tsx` (`Fx`, `NumCell`, `DateCell`, `AddRowButton`, `ProvenanceBadge`, `ProvenanceLegendItems`), styles in `workspace.css` (ported from the V1 POC, tokens only).
 - `rfp.tsx`: `PackSection`, `TenderPackSection`, `SubmissionSection`, `QualSection`, `ClausesSection`, `isTenderLocked`, `docCounts`, `useJobSim`.
 - `library.tsx`: `LibraryUpload`, `TagPicker`, `bumpVersion`, `certProblems`, `LibraryKind`.
 - `upload.tsx`: `UploadDialog`, `StagedFile`, `formatSize`.
@@ -58,7 +59,7 @@ Do not copy the hard-coded hex values in `.pill-draft`, `.pill-active`, `.pill-c
 
 ## Toast vs Banner vs Dialog
 - Toast (`useToast().push`): transient feedback after an action completes. Examples: "Processing started" (rfp.tsx:228), "Version N deleted" (bc.tsx:765), and an invalid input error (bc.tsx:276). Toasts always auto-dismiss: success/info after 5s, warning/error after 8s (toast.tsx:24). At most 3 stack top-right. Never put something the user must keep seeing in a toast. `App.tsx` also raises success toasts from selected audit actions (`CONFIRM_FROM_AUDIT`).
-- Banner: persistent, page or section level state that stays while the condition holds. Examples: tender locked or archived (`kind="locked"`, TendersPage.tsx:149), results out of date or partial (rfp.tsx:126-145), Final Check failures (`warning`, which warns and never blocks), template layout mismatch (`error`, which blocks MSPO, bc.tsx:676), and view-only role (`info`, RulesPage.tsx:47). Put the fix action in `actions` as a compact Button.
+- Banner: persistent, page or section level state that stays while the condition holds. Examples: tender locked or archived (`kind="locked"`, TendersPage.tsx:149), results out of date or partial (rfp.tsx:126-145), Final Check failures (`warning`, which warns and never blocks), unsaved business case edits on the MSPO tab (`info`), and view-only role (`info`, RulesPage.tsx:47). Put the fix action in `actions` as a compact Button.
 - `ConfirmDialog`: destructive or irreversible actions (`danger`), leaving with unsaved changes (`lib/leaveGuard.tsx:46`), and short forms or uploads (`wide`, e.g. Create tender, `UploadDialog`). `confirmLabel` names the action ("Delete version", never "OK"). Cancel holds the default focus. Use `confirmDisabled` for required input. Never use `window.confirm`.
 
 ## Tabs and sticky rules

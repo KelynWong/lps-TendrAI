@@ -1,0 +1,182 @@
+/* Business case workspace (Basic Info ... Labour Inputs), ported from the V1
+   POC stylesheet. Tokens only; the workspace sits inside a tender tab, so its
+   sticky bars stack below the tender tab strip (--bc-tabs-h). */
+
+.actions-row { display: flex; gap: var(--sp-3); align-items: center; margin: var(--sp-3) 0; flex-wrap: wrap; }
+.actions-right { display: flex; align-items: center; gap: var(--sp-3); margin-left: auto; flex-wrap: wrap; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--sp-4); margin-bottom: var(--sp-4); }
+
+/* Recalculation flash on live totals */
+@keyframes cell-flash { from { background-color: var(--brand-purple-subtle); } to { background-color: transparent; } }
+.flash { animation: cell-flash 1.5s ease-out; }
+
+/* ---- Sticky bars --------------------------------------------------------------- */
+.bc-bar {
+  position: sticky; top: var(--bc-tabs-h); z-index: 16; height: var(--bc-bar-h);
+  display: flex; align-items: center; gap: var(--sp-4);
+  background: var(--surface); border: 1px solid var(--border);
+  padding: 0 var(--sp-4); margin-bottom: 0;
+}
+.bc-bar-title { min-width: 0; }
+.bc-bar-title .sub { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-bar-kpis { display: flex; gap: var(--sp-4); margin-left: auto; align-items: center; }
+.bc-kpi { text-align: right; }
+.bc-kpi span { display: block; font-size: var(--fs-label); color: var(--ink-secondary); line-height: 1.2; }
+.bc-kpi b { font-size: var(--fs-body); font-variant-numeric: tabular-nums; }
+.bc-scope .subtabs-sticky { top: calc(var(--bc-tabs-h) + var(--bc-bar-h)); }
+.tender-detail .tender-tab-content .bc-scope .tab-body > table.grid th,
+.tender-detail .tender-tab-content .bc-scope .tab-body section > table.grid th { top: calc(2 * var(--bc-tabs-h) + var(--bc-bar-h)); }
+.bc-scope .scroll-x { max-height: calc(100vh - var(--topbar-h) - var(--bc-bar-h) - 2 * var(--bc-tabs-h) - 96px); }
+.tab-body { padding-bottom: var(--sp-4); }
+
+.check-pill {
+  display: inline-flex; align-items: center; gap: 4px; border: 1px solid;
+  border-radius: var(--radius); padding: 2px 8px; font-weight: 600;
+  font-size: var(--fs-label); cursor: pointer; font-family: inherit; background: none;
+}
+.check-pill.good { background: var(--success-tint); color: var(--success); border-color: var(--success); }
+.check-pill.bad { background: var(--error-tint); color: var(--error); border-color: var(--error); }
+
+/* Save bar (unsaved draft changes) */
+.save-bar {
+  display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap;
+  background: var(--brand-purple-subtle); border: 1px solid var(--brand-purple);
+  border-radius: var(--radius); padding: var(--sp-2) var(--sp-4); margin: var(--sp-3) 0;
+  font-weight: 600; color: var(--ink);
+}
+.save-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--brand-purple); display: inline-block; }
+.save-bar-actions { margin-left: auto; display: flex; align-items: center; gap: var(--sp-2); }
+.save-bar-actions input[type="text"] { width: 260px; }
+
+/* ---- Tables ----------------------------------------------------------------------- */
+.section-row td { background: var(--surface-subtle) !important; font-weight: 600; }
+.ebitda-row td { background: var(--success-tint) !important; }
+.summary-grid td:first-child { white-space: pre; }
+.row-neg td { background: var(--error-tint); }
+.sticky-first th:first-child, .sticky-first td:first-child {
+  position: sticky; left: 0; z-index: 6; background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+.sticky-first th:first-child { z-index: 7; background: var(--surface-subtle); }
+.sticky-first tbody tr:hover td:first-child { background: var(--surface-subtle); }
+/* Cash Flow: pin Period, Year and Opening Balance */
+.sticky-3 thead th:nth-child(-n+3), .sticky-3 tbody td:nth-child(-n+3) {
+  position: sticky; z-index: 6; background: var(--surface); overflow: hidden;
+}
+.scroll-x table.grid.sticky-3 thead th:nth-child(-n+3) { z-index: 10; background: var(--surface-subtle); }
+.sticky-3 thead th:nth-child(1), .sticky-3 tbody td:nth-child(1) { left: 0; width: 68px; min-width: 68px; max-width: 68px; }
+.sticky-3 thead th:nth-child(2), .sticky-3 tbody td:nth-child(2) { left: 68px; width: 44px; min-width: 44px; max-width: 44px; }
+.sticky-3 thead th:nth-child(3), .sticky-3 tbody td:nth-child(3) { left: 112px; width: 140px; min-width: 140px; max-width: 140px; border-right: 1px solid var(--border); }
+.sticky-3 tbody tr:hover td:nth-child(-n+3) { background: var(--surface-subtle); }
+.sticky-3 tbody .row-neg td:nth-child(-n+3) { background: var(--error-tint); }
+.sticky-3 tfoot td:first-child { position: sticky; left: 0; z-index: 6; background: var(--surface-subtle); }
+/* Summary: pin the row label, Total and Total-% columns */
+.sticky-sum thead th:nth-child(-n+3), .sticky-sum tbody td:nth-child(-n+3) { position: sticky; z-index: 6; background: var(--surface); }
+.scroll-x table.grid.sticky-sum thead th:nth-child(-n+3) { z-index: 10; background: var(--surface-subtle); }
+.sticky-sum thead th:nth-child(1), .sticky-sum tbody td:nth-child(1) { left: 0; width: 300px; min-width: 300px; max-width: 300px; white-space: pre-wrap !important; }
+.sticky-sum thead th:nth-child(2), .sticky-sum tbody td:nth-child(2) { left: 300px; width: 110px; min-width: 110px; max-width: 110px; }
+.sticky-sum thead th:nth-child(3), .sticky-sum tbody td:nth-child(3) { left: 410px; width: 70px; min-width: 70px; max-width: 70px; border-right: 1px solid var(--border); }
+.sticky-sum tbody tr:hover td:nth-child(-n+3) { background: var(--surface-subtle); }
+.sticky-sum .section-row td:nth-child(-n+3) { background: var(--surface-subtle); }
+.sticky-sum .ebitda-row td:nth-child(-n+3) { background: var(--success-tint); }
+.group-th { text-align: center !important; border-left: 1px solid var(--border); }
+.pct-col { font-size: var(--fs-label); }
+/* Manual-input cells: amber while still the AI-applied default, green once verified */
+.rate-cell .cell-btn, .rate-wrap .cell-btn { background: var(--warning-tint); border: 1px solid var(--warning); }
+.rate-cell.verified .cell-btn, .rate-wrap.verified .cell-btn { background: var(--success-tint); border-color: var(--success); }
+.vendor-col { min-width: 110px; }
+.vendor-col-head { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.cell-input-date { width: 136px; text-align: left; }
+
+/* In-table add-row: divider line with a + action in the middle */
+.add-row td { padding: 0; background: var(--surface); }
+.add-row button {
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: var(--sp-2);
+  background: none; border: none; cursor: pointer; color: var(--brand-purple);
+  font: inherit; font-size: var(--fs-label); font-weight: 600; padding: 7px var(--sp-4); min-height: 32px;
+}
+.add-row button::before, .add-row button::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.add-row button:hover { background: var(--brand-purple-subtle); }
+.add-row button:hover::before, .add-row button:hover::after { background: var(--brand-purple); }
+.add-row button svg { flex: none; }
+/* Vertical add-column slot in Cash Flow */
+th.add-col, td.add-col { width: 28px; min-width: 28px; max-width: 28px; padding: 2px !important; text-align: center; cursor: pointer; }
+td.add-col {
+  background-image: repeating-linear-gradient(to bottom, var(--border-strong) 0 4px, transparent 4px 9px);
+  background-size: 1px 100%; background-repeat: no-repeat; background-position: center;
+}
+th.add-col:hover, tr:hover td.add-col, td.add-col:hover { background-color: var(--brand-purple-subtle); }
+.add-col-btn {
+  border: 1px dashed var(--border-strong); background: var(--surface); border-radius: 50%;
+  width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center;
+  color: var(--ink-secondary); cursor: pointer; padding: 0;
+}
+th.add-col:hover .add-col-btn { color: var(--brand-purple); border-color: var(--brand-purple); }
+
+/* ---- Basic Info ------------------------------------------------------------------- */
+.info-grid { display: grid; grid-template-columns: repeat(2, minmax(300px, 1fr)); gap: 0 var(--sp-8); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--sp-2) var(--sp-4); }
+.info-col { min-width: 0; }
+.info-row { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-3); padding: 7px 0; border-bottom: 1px solid var(--border); min-height: 38px; }
+.info-col .info-row:last-child { border-bottom: none; }
+.info-row label { color: var(--ink-secondary); font-size: var(--fs-dense); }
+.info-val { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.computed { color: var(--ink); font-variant-numeric: tabular-nums; }
+.strong { font-weight: 600; }
+.warn-inline { color: var(--warning); font-weight: 600; margin-left: var(--sp-2); }
+.billing-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; }
+.billing-head h3 { margin-bottom: 0; }
+.outcome-picker { font-size: var(--fs-label); color: var(--ink-secondary); font-weight: 600; display: flex; flex-direction: column; gap: 4px; }
+
+/* Summary remarks and the Working tab */
+.summary-remarks { margin-top: var(--sp-4); }
+.summary-remarks textarea {
+  width: 100%; min-height: 84px; padding: var(--sp-2) var(--sp-3); font: inherit; font-size: var(--fs-dense);
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  background: var(--surface); color: var(--ink); resize: vertical;
+}
+.summary-remarks textarea:disabled { background: var(--surface-subtle); color: var(--ink-secondary); }
+.working-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); gap: var(--sp-3); }
+.working-card { margin-bottom: 0; }
+.working-card h3 { margin-top: 0; }
+
+/* ---- Figure-state badges: icon + label + border style, never colour alone -------- */
+.badge-cited { background: var(--info-tint); color: var(--info); border: 1px solid var(--info); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.badge-estimate { background: var(--warning-tint); color: var(--warning); border: 1px dashed var(--warning); }
+.badge-manual { background: var(--surface); color: var(--ink-secondary); border: 1px dotted var(--border-strong); }
+.badge-cited-confirmed {
+  background: var(--success-tint); color: var(--success); border: 1px solid var(--success);
+  cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+}
+.badge-cited-edited {
+  background: var(--success-tint); color: var(--success); border: 1px dashed var(--brand-purple);
+  box-shadow: inset 2px 0 0 var(--brand-purple);
+  cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+}
+.badge-cited:hover, .badge-cited-confirmed:hover, .badge-cited-edited:hover { filter: brightness(0.95); }
+button.badge { font: inherit; font-size: var(--fs-label); font-weight: 600; }
+.legend-items { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); padding: var(--sp-2) var(--sp-3) var(--sp-3); }
+.legend-items > span { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-secondary); }
+.hint-row { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); font-size: var(--fs-label); margin-bottom: var(--sp-3); }
+
+/* ---- Formula tooltips (portalled to body, positioned fixed) ---------------------- */
+.fx { position: relative; cursor: help; border-bottom: 1px dotted var(--border-strong); }
+.fx-tip {
+  position: absolute; z-index: 300; pointer-events: none;
+  display: flex; align-items: flex-start; gap: 8px;
+  background: var(--tip-bg); color: #fff; font-size: var(--fs-label); font-weight: 400;
+  font-family: 'IBM Plex Mono', Consolas, monospace; line-height: 1.5;
+  padding: 7px 11px; border-radius: var(--radius); width: max-content; max-width: min(340px, calc(100vw - 16px));
+  text-align: left;
+}
+.fx-text { white-space: pre-line; min-width: 0; font-style: normal; font-weight: 400; }
+th .fx { border-bottom-color: var(--border-strong); }
+.fx-fx {
+  flex: none; align-self: flex-start; background: var(--brand-purple); color: #fff; font-style: italic;
+  font-weight: 700; font-family: Georgia, serif; border-radius: var(--radius); padding: 0 5px;
+  font-size: var(--fs-label); line-height: 1.5;
+}
+.ver-scroll { max-height: 50vh; overflow: auto; }
+
+/* Versions tab: one line per DRB member, then the Approve button */
+.approvals-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; white-space: nowrap; }
+.approvals-cell .btn { margin-top: var(--sp-1); }

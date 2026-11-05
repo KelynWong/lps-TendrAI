@@ -70,13 +70,13 @@ users ─┬─< tenders ─┬─< tender_documents ─< document_chunks (text 
 | citations: text around a clause, page navigation | `document_chunks` (page-aware text, pgvector embedding) |
 | `TemplateSearch` / `TemplateMatch` | `tender_template_searches`, `tender_template_matches` |
 | `GenDoc` | `gen_docs` |
-| `BcVersion` (+ `data.header`) | `bc_versions` (header columns, `cells` jsonb of raw numeric cells) |
+| `BcVersion` (+ `data.header`) | `bc_versions` (header columns, `cells` jsonb of raw numeric cells). V3 adds `origin`, `createdAt`, `savedBy`, `edits` (saves to the working version), `approvals`, `approvedAt`, `copyOf` and the full business case (`bc`: seven tabs with per-value provenance) to the frontend type; no columns exist for them yet; clauses gain `categoryConfidence`, product lines `currency`, historical records `aiSource` / `refId` / `tenderId` / `lessons` and tenders `lessons`, also frontend only so far (needs a migration, see [V3 backend follow-up](../docs/USER_GUIDE.md#v3-backend-follow-up)) |
 | `BcProduct` / `BcResource` / `BcBilling` | `bc_products`, `bc_resources`, `bc_billing` |
 | Final Check results (`runFinalChecks`) | `final_check_results` cache, recomputed when rules change |
 | `RuleDef` (`DEFAULT_RULES`) | `final_check_rules` (`definition` jsonb holds the kind-specific fields) |
-| `MspoDefaults` (`DEFAULT_MSPO_MAPPING`) | `mspo_mapping_defaults` (one row per template column, ordered) |
-| `Tender.mspoMapping["plan:target"]` | `tender_mspo_mappings` |
-| `Tender.mspoRows/QuoteLine/FyCount/DaysPerMonth` | `tenders.mspo_rows_*`, `mspo_quote_line`, `mspo_fy_count`, `mspo_days_per_month` |
+| `MspoDefaults` (`DEFAULT_MSPO_MAPPING`) | `mspo_mapping_defaults` (one row per template column, ordered). V3 frontend maps each column to a business case field (`field`) instead of tab / first cell / span; the columns need a migration |
+| `Tender.mspoMapping["plan:target"]` | `tender_mspo_mappings` (V3 frontend: `{ field }` per column) |
+| `Tender.mspoQuoteLine/FyCount/DaysPerMonth` | `mspo_quote_line`, `mspo_fy_count`, `mspo_days_per_month` (`tenders.mspo_rows_*` is no longer used by the V3 frontend) |
 | `TemplateDoc`, `Boilerplate` (certificates, CVs) | `library_items` (`kind`), `library_item_versions` (history), `tags` |
 | `TemplateDoc.usedBy` | view `v_template_usage` (checklist + gen_docs + confirmed matches) |
 | `RepoRecord`, `RepoVersion`, `documents` | `repository_records`, `repository_record_versions`, `repository_files` |

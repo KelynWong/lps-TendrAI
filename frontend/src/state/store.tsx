@@ -4,8 +4,8 @@
 import { createContext, useContext, useMemo, useReducer } from 'react';
 import type { ReactNode } from 'react';
 import type {
+  AiSourceUse,
   AuditEntry,
-  BcVersion,
   Boilerplate,
   ChecklistItem,
   Clause,
@@ -17,13 +17,19 @@ import type {
   TemplateSearch,
   Qualification,
   Tender,
+  TenderStatusReason,
 } from '../types';
 import { PROCESS_STAGES } from '../types';
 import type { Role, UserInfo } from '../config';
 import { AUDIT, BOILERPLATE, BOILERPLATE_TAGS, REPOSITORY, TEMPLATES, TENDERS } from '../data/mock';
 import { buildDemoExtraction } from '../data/extraction';
 import { DEFAULT_RULES, type RuleDef } from '../rules/finalChecks';
-import { DEFAULT_MSPO_MAPPING, type FieldMapEntry, type MapGroup, type MspoDefaults, type MspoPlan } from '../mspo/mapping';
+import { DEFAULT_MSPO_MAPPING, fieldLabel, type FieldMapEntry, type MapGroup, type MspoDefaults } from '../mspo/mapping';
+import { aiDraftVersion, aiSources, approvalBlocked, editBlocked, outcomeRecord, withApproval, withSavedEdits } from '../businessCase/versions';
+import { DEFAULT_FX_RATES } from '../businessCase/parameters';
+import type { BusinessCaseState } from '../businessCase/model';
+import { canDo, DRB_APPROVERS } from '../config';
+import type { ChangeEntry } from '../businessCase/draft';
 
 export interface AppState {
   user: UserInfo | null; // null = not signed in
@@ -36,10 +42,12 @@ export interface AppState {
   boilerplateTags: string[];
   repository: RepoRecord[];
   audit: AuditEntry[];
-  /** Final Check rules applied to every business case upload */
+  /** Final Check rules applied to every business case version */
   rules: RuleDef[];
   /** company-wide MSPO mapping defaults (tenders may adjust their copy) */
   mspoDefaults: MspoDefaults;
+  /** company default exchange rates (to 1 USD); each new AI draft copies them */
+  fxDefaults: Record<string, number>;
   /** filters to apply when the Audit log opens (e.g. "View history" on a tab) */
   auditPrefill?: { tender?: string; section?: string };
   /** page the shell should switch to (n changes on every request) */
@@ -71,13 +79,14 @@ export type Action =
   | { type: 'upsert-rule'; rule: RuleDef }
   | { type: 'delete-rule'; id: string }
   | { type: 'set-mspo-defaults'; plan: MapGroup; entries: FieldMapEntry[] }
+  | { type: 'set-fx-defaults'; rates: Record<string, number> }
   | { type: 'open-audit'; tender?: string; section?: string; returnTo?: ReturnTarget }
   | { type: 'go-to'; page: string; sub?: string; returnTo?: ReturnTarget }
   | { type: 'back-to-tender' }
   | { type: 'clear-return' }
   | { type: 'clear-pack-tab-request' }
   | { type: 'clear-audit-prefill' }
-  | { type: 'set-mspo-details'; tenderId: string; changes: string[]; quoteLine: string; fyCount: number; daysPerMonth: number; rows: Record<MspoPlan, number> }
+  | { type: 'set-mspo-details'; tenderId: string; changes: string[]; quoteLine: string; fyCount: number; daysPerMonth: number }
   | { type: 'reset-mspo-mapping'; tenderId: string; key?: string }
   | { type: 'upload-template'; tpl: TemplateDoc; replaceId?: string }
   | { type: 'upload-boilerplate'; item: Boilerplate; replaceId?: string }
@@ -101,14 +110,20 @@ export type Action =
   // -- per-tender template search --
   | { type: 'template-search-start'; tenderId: string }
   | { type: 'template-search-done'; tenderId: string; search: TemplateSearch }
-  | { type: 'set-mspo-mapping'; tenderId: string; key: string; tab: string; from: string; to?: string }
-  | { type: 'delete-bc-version'; tenderId: string; v: number }
+  | { type: 'set-mspo-mapping'; tenderId: string; key: string; field: string }
   | { type: 'set-tender-status'; tenderId: string; status: Tender['status']; statusReason: Tender['statusReason'] }
+  /** lessons learned once the outcome is known */
+  | { type: 'set-lessons'; tenderId: string; text: string }
+  /** how the AI may use a historical business case when drafting */
+  | { type: 'set-ai-source'; recordId: string; use: AiSourceUse }
   | { type: 'patch-checklist'; tenderId: string; itemId: string; patch: Partial<ChecklistItem> }
   /** several clause edits saved together (one audit entry) */
   | { type: 'save-clauses'; tenderId: string; patches: { clauseId: string; patch: Partial<Clause> }[] }
   | { type: 'patch-qual'; tenderId: string; qualId: string; patch: Partial<Qualification> }
-  | { type: 'upload-bc'; tenderId: string; version: BcVersion }
+  /** a person's edits saved to the latest (working) business case version */
+  | { type: 'save-bc'; tenderId: string; bc: BusinessCaseState; summary: string; comment?: string; changes: ChangeEntry[] }
+  /** the signed-in DRB member approves a version (the last approval archives it) */
+  | { type: 'approve-bc-version'; tenderId: string; v: number }
   | { type: 'update-template'; id: string; patch: Partial<TemplateDoc> }
   | { type: 'delete-template'; id: string }
   | { type: 'update-boilerplate'; id: string; patch: Partial<Boilerplate> }
@@ -116,6 +131,16 @@ export type Action =
   | { type: 'archive-repo'; id: string; sizeFrom: string; sizeTo: string }
   | { type: 'request-restore'; id: string }
   | { type: 'complete-restore'; id: string };
+
+// The tender's status follows the DRB approvals while it is a Draft: the first
+// approval makes it In Approval, the last one Approved, and saving changes
+// (which voids approvals, or starts the next round after an approval) puts it
+// back In Progress. Active, Won and Closed tenders are never changed here.
+function draftStatus(t: Tender, statusReason: TenderStatusReason): Partial<Tender> {
+  return t.status === 'Draft' && t.statusReason !== statusReason ? { statusReason } : {};
+}
+const statusAfterSave = (t: Tender) =>
+  t.statusReason === 'In Approval (Draft)' || t.statusReason === 'Approved (Draft)' ? draftStatus(t, 'In Progress (Draft)') : {};
 
 function patchTender(state: AppState, id: string, fn: (t: Tender) => Tender): AppState {
   return { ...state, tenders: state.tenders.map((t) => (t.id === id ? fn(t) : t)) };
@@ -277,6 +302,11 @@ function reducer(state: AppState, a: Action): AppState {
           checklist: firstRun && extraction ? extraction.checklist : t.checklist,
           quals: firstRun && extraction ? extraction.quals : t.quals,
           clauses: firstRun && extraction ? extraction.clauses : clauses,
+          // the last stage drafts the business case once; reprocessing never
+          // replaces a business case people have worked on
+          bcVersions: t.bcVersions.length
+            ? t.bcVersions
+            : [aiDraftVersion({ ...t, clauses: firstRun && extraction ? extraction.clauses : clauses }, new Date().toISOString(), { sources: aiSources(state.repository, t.id), fxRates: state.fxDefaults })],
           stepIdx: Math.max(t.stepIdx, 1),
         };
       });
@@ -308,21 +338,37 @@ function reducer(state: AppState, a: Action): AppState {
     case 'set-mspo-mapping':
       return patchTender(state, a.tenderId, (t) => ({
         ...t,
-        mspoMapping: { ...t.mspoMapping, [a.key]: { tab: a.tab, from: a.from, to: a.to } },
+        mspoMapping: { ...t.mspoMapping, [a.key]: { field: a.field } },
       }));
-    case 'delete-bc-version':
-      return patchTender(state, a.tenderId, (t) => ({
-        ...t,
-        bcVersions: t.bcVersions.filter((v) => v.v !== a.v),
-      }));
-    case 'set-tender-status':
-      return patchTender(state, a.tenderId, (t) => ({
+    case 'set-tender-status': {
+      const next = patchTender(state, a.tenderId, (t) => ({
         ...t,
         status: a.status,
         statusReason: a.statusReason,
         drbOutcome: a.statusReason === 'Won (Won)' ? 'Won' : a.statusReason === 'Lost (Closed)' ? 'Lost' : t.drbOutcome,
         stepIdx: a.status === 'Won' || a.status === 'Closed' ? 5 : t.stepIdx,
       }));
+      // a known outcome files the approved business case as an AI drafting source
+      const outcome = a.statusReason === 'Won (Won)' ? 'Won' : a.statusReason === 'Lost (Closed)' ? 'Lost' : null;
+      const t = next.tenders.find((x) => x.id === a.tenderId);
+      const record = outcome && t ? outcomeRecord(t, outcome, state.repository, new Date().toISOString()) : null;
+      if (!record) return next;
+      return next.repository.some((r) => r.id === record.id)
+        ? { ...next, repository: next.repository.map((r) => (r.id === record.id ? record : r)) }
+        : { ...next, repository: [record, ...next.repository] };
+    }
+    case 'set-lessons': {
+      const user = state.user;
+      if (!user || !canDo.recordLessons(user.role)) return state;
+      const lessons = a.text.trim() ? { text: a.text.trim(), by: user.name, at: new Date().toISOString() } : undefined;
+      const next = patchTender(state, a.tenderId, (t) => ({ ...t, lessons }));
+      // the filed business case carries the lessons with it
+      return { ...next, repository: next.repository.map((r) => (r.tenderId === a.tenderId ? { ...r, lessons: lessons?.text } : r)) };
+    }
+    case 'set-ai-source': {
+      if (!state.user || !canDo.manageRepo(state.user.role)) return state;
+      return { ...state, repository: state.repository.map((r) => (r.id === a.recordId && r.kind === 'Business case' ? { ...r, aiSource: a.use } : r)) };
+    }
 
     case 'patch-checklist':
       return patchTender(state, a.tenderId, (t) => ({
@@ -346,7 +392,9 @@ function reducer(state: AppState, a: Action): AppState {
           if (p.response !== undefined && p.response !== c.response) {
             changes.push({ ts: now, by, field: 'Remark', from: c.response, to: p.response });
           }
-          return { ...c, ...p, history: changes.length ? [...(c.history ?? []), ...changes] : c.history };
+          // a person setting the category replaces the AI's classification score
+          const categoryConfidence = p.category !== undefined && p.category !== c.category ? undefined : c.categoryConfidence;
+          return { ...c, ...p, categoryConfidence, history: changes.length ? [...(c.history ?? []), ...changes] : c.history };
         }),
       }));
     }
@@ -355,12 +403,37 @@ function reducer(state: AppState, a: Action): AppState {
         ...t,
         quals: t.quals.map((q) => (q.id === a.qualId ? { ...q, ...a.patch } : q)),
       }));
-    case 'upload-bc':
-      return patchTender(state, a.tenderId, (t) => ({
-        ...t,
-        bcVersions: [...t.bcVersions, a.version],
-        stepIdx: Math.max(t.stepIdx, 2),
-      }));
+    case 'save-bc': {
+      const user = state.user;
+      if (!user || !canDo.editBc(user.role)) return state;
+      return patchTender(state, a.tenderId, (t) => {
+        const latest = t.bcVersions[t.bcVersions.length - 1];
+        // an approved version is archived: saves never reach it
+        if (!latest || editBlocked(t, latest)) return t;
+        return {
+          ...t,
+          ...statusAfterSave(t),
+          bcVersions: withSavedEdits(t.bcVersions, a.bc, user.name, new Date().toISOString(), a.summary, a.comment),
+          stepIdx: Math.max(t.stepIdx, 2),
+        };
+      });
+    }
+    case 'approve-bc-version': {
+      const user = state.user;
+      if (!user || !canDo.approveBc(user.role)) return state;
+      return patchTender(state, a.tenderId, (t) => {
+        const target = t.bcVersions.find((v) => v.v === a.v);
+        if (!target || approvalBlocked(t, target)) return t;
+        const bcVersions = withApproval(t.bcVersions, a.v, user, new Date().toISOString());
+        const approved = !!bcVersions.find((v) => v.v === a.v)?.approvedAt;
+        return {
+          ...t,
+          ...draftStatus(t, approved ? 'Approved (Draft)' : 'In Approval (Draft)'),
+          bcVersions,
+          stepIdx: approved ? Math.max(t.stepIdx, 3) : t.stepIdx,
+        };
+      });
+    }
     case 'log':
       return state; // the audit wrapper records it
     case 'upsert-rule':
@@ -374,17 +447,19 @@ function reducer(state: AppState, a: Action): AppState {
       return { ...state, rules: state.rules.filter((r) => r.id !== a.id) };
     case 'set-mspo-defaults':
       return { ...state, mspoDefaults: { ...state.mspoDefaults, [a.plan]: a.entries } };
+    case 'set-fx-defaults':
+      if (!state.user || !canDo.manageRules(state.user.role)) return state;
+      return { ...state, fxDefaults: { ...a.rates } };
     case 'set-mspo-details':
       return patchTender(state, a.tenderId, (t) => ({
         ...t,
         mspoQuoteLine: a.quoteLine || undefined,
         mspoFyCount: a.fyCount,
         mspoDaysPerMonth: a.daysPerMonth,
-        mspoRows: { ...a.rows },
       }));
     case 'reset-mspo-mapping':
       return patchTender(state, a.tenderId, (t) => {
-        if (!a.key) return { ...t, mspoMapping: undefined, mspoRows: undefined, mspoFyCount: undefined, mspoDaysPerMonth: undefined };
+        if (!a.key) return { ...t, mspoMapping: undefined, mspoFyCount: undefined, mspoDaysPerMonth: undefined };
         const next = { ...t.mspoMapping };
         delete next[a.key];
         return { ...t, mspoMapping: next };
@@ -473,6 +548,12 @@ function describe(prev: AppState, a: Action, next: AppState): Described | null {
     return t ? (t.ref || t.name) : undefined;
   };
   const docName = (tid: string, did: string) => tenderOf(tid)?.pack.find((d) => d.id === did)?.name ?? 'document';
+  /** "; tender status X -> Y" when the action moved the tender's status reason */
+  const statusNote = (tid: string) => {
+    const from = prev.tenders.find((x) => x.id === tid)?.statusReason;
+    const to = next.tenders.find((x) => x.id === tid)?.statusReason;
+    return from && to && from !== to ? `; tender status ${from} -> ${to}` : '';
+  };
   switch (a.type) {
     case 'open-audit':
     case 'clear-audit-prefill':
@@ -496,6 +577,10 @@ function describe(prev: AppState, a: Action, next: AppState): Described | null {
       return { action: 'Rule deleted', detail: prev.rules.find((r) => r.id === a.id)?.name ?? '', section: 'Business case management' };
     case 'set-mspo-defaults':
       return { action: 'MSPO default mapping changed', detail: a.plan === 'figures' ? 'Business case figures' : `${a.plan} plan`, section: 'Business case management' };
+    case 'set-fx-defaults': {
+      const changes = Object.entries(a.rates).filter(([code, v]) => prev.fxDefaults[code] !== v).map(([code, v]) => `${code}: ${prev.fxDefaults[code] ?? '-'} -> ${v}`);
+      return changes.length && next.fxDefaults !== prev.fxDefaults ? { action: 'Exchange rate defaults changed', detail: changes.join('; '), section: 'Business case management' } : null;
+    }
     case 'set-mspo-details':
       return { action: 'MSPO details saved', detail: a.changes.join('; '), tender: refOf(a.tenderId), section: 'MSPO templates' };
     case 'reset-mspo-mapping':
@@ -515,7 +600,20 @@ function describe(prev: AppState, a: Action, next: AppState): Described | null {
       return { action: 'Tender deleted', detail: tenderOf(a.tenderId)?.name ?? '', tender: refOf(a.tenderId), section: 'Tenders' };
     case 'set-tender-status': {
       const t = tenderOf(a.tenderId);
-      return { action: 'Status changed', detail: `${t?.statusReason ?? '-'} -> ${a.statusReason}`, tender: refOf(a.tenderId), section: 'Tenders' };
+      const filed = next.repository.length > prev.repository.length ? next.repository[0] : undefined;
+      return { action: 'Status changed', detail: `${t?.statusReason ?? '-'} -> ${a.statusReason}${filed ? `; approved business case filed in Historical data as a ${filed.aiSource} AI source (${filed.refId})` : ''}`, tender: refOf(a.tenderId), section: 'Tenders' };
+    }
+    case 'set-lessons': {
+      const before = tenderOf(a.tenderId)?.lessons?.text;
+      const after = next.tenders.find((x) => x.id === a.tenderId)?.lessons?.text;
+      if (before === after) return null;
+      return { action: 'Lessons learned recorded', detail: after ?? '(cleared)', tender: refOf(a.tenderId), section: 'Tenders' };
+    }
+    case 'set-ai-source': {
+      const r = prev.repository.find((x) => x.id === a.recordId);
+      const after = next.repository.find((x) => x.id === a.recordId);
+      if (!r || r.aiSource === after?.aiSource) return null;
+      return { action: 'AI source changed', detail: `${r.name}: ${r.aiSource ?? 'not used'} -> ${a.use}`, section: 'Historical data' };
     }
     case 'add-pack-docs':
       return { action: 'Document uploaded', detail: a.docs.map((d) => d.name).join(', '), tender: refOf(a.tenderId), section: 'Documents' };
@@ -532,7 +630,8 @@ function describe(prev: AppState, a: Action, next: AppState): Described | null {
     case 'finish-processing': {
       const t = next.tenders.find((x) => x.id === a.tenderId);
       if (!tenderOf(a.tenderId)?.job) return null;
-      return { system: true, action: 'Processing completed', detail: `${t?.clauses.length ?? 0} clauses, ${t?.checklist.length ?? 0} submission documents, ${t?.quals.length ?? 0} qualification requirements`, tender: refOf(a.tenderId), section: 'Documents' };
+      const drafted = !tenderOf(a.tenderId)?.bcVersions.length && !!t?.bcVersions.length;
+      return { system: true, action: 'Processing completed', detail: `${t?.clauses.length ?? 0} clauses, ${t?.checklist.length ?? 0} submission documents, ${t?.quals.length ?? 0} qualification requirements${drafted ? '; business case v1 drafted' : ''}`, tender: refOf(a.tenderId), section: 'Documents' };
     }
     case 'retry-doc':
       return { action: 'Document retried', detail: docName(a.tenderId, a.docId), tender: refOf(a.tenderId), section: 'Documents' };
@@ -574,12 +673,33 @@ function describe(prev: AppState, a: Action, next: AppState): Described | null {
         section: 'Clauses',
       };
     }
-    case 'upload-bc':
-      return { action: 'Business case uploaded', detail: `v${a.version.v} - ${a.version.fileName}${a.version.layoutUnrecognised ? ' (layout not recognised)' : ''}`, tender: refOf(a.tenderId), section: 'Business case' };
-    case 'delete-bc-version':
-      return { action: 'Business case version deleted', detail: `v${a.v}`, tender: refOf(a.tenderId), section: 'Business case' };
+    case 'save-bc': {
+      const before = tenderOf(a.tenderId)?.bcVersions;
+      const after = next.tenders.find((x) => x.id === a.tenderId)?.bcVersions;
+      const v = after?.[after.length - 1];
+      if (!v || before?.[before.length - 1] === v) return null; // refused save
+      const voided = v.edits?.[v.edits.length - 1]?.voidedApprovals;
+      return {
+        action: 'Business case saved',
+        detail: `v${v.v} - ${a.changes.length ? a.changes.map((c) => `${c.section}: ${c.detail}`).join('; ') : a.summary}${a.comment?.trim() ? ` ("${a.comment.trim()}")` : ''}${voided ? `; ${voided} DRB approval(s) voided` : ''}${statusNote(a.tenderId)}`,
+        tender: refOf(a.tenderId),
+        section: 'Business case',
+      };
+    }
+    case 'approve-bc-version': {
+      const before = tenderOf(a.tenderId)?.bcVersions.find((v) => v.v === a.v);
+      const after = next.tenders.find((x) => x.id === a.tenderId)?.bcVersions;
+      const v = after?.find((x) => x.v === a.v);
+      if (!before || !v || (v.approvals ?? []).length === (before.approvals ?? []).length) return null;
+      const status = statusNote(a.tenderId);
+      if (v.approvedAt) {
+        const copy = after?.[after.length - 1];
+        return { action: 'Business case approved', detail: `v${a.v} approved by all ${DRB_APPROVERS.length} DRB members; v${a.v} archived read-only, working copy v${copy?.v} created${status}`, tender: refOf(a.tenderId), section: 'Business case' };
+      }
+      return { action: 'Business case approval recorded', detail: `v${a.v} (${v.approvals?.length} of ${DRB_APPROVERS.length} DRB approvals)${status}`, tender: refOf(a.tenderId), section: 'Business case' };
+    }
     case 'set-mspo-mapping':
-      return { action: 'MSPO mapping changed', detail: `${mapKeyLabel(a.key)} <- ${a.tab} ${a.from}${a.to ? `:${a.to}` : ''}`, tender: refOf(a.tenderId), section: 'MSPO templates' };
+      return { action: 'MSPO mapping changed', detail: `${mapKeyLabel(a.key)} <- ${fieldLabel(a.field)}`, tender: refOf(a.tenderId), section: 'MSPO templates' };
     case 'upload-template':
       return { action: a.replaceId ? 'Template replaced' : 'Template uploaded', detail: `${a.tpl.name} v${a.tpl.version} (${a.tpl.agency}, ${a.tpl.type})`, section: 'Templates' };
     case 'upload-boilerplate': {
@@ -630,6 +750,7 @@ const initial: AppState = {
   audit: AUDIT,
   rules: DEFAULT_RULES,
   mspoDefaults: DEFAULT_MSPO_MAPPING,
+  fxDefaults: DEFAULT_FX_RATES,
 };
 
 const Ctx = createContext<{ state: AppState; dispatch: React.Dispatch<Action> } | null>(null);

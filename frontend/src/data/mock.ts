@@ -2,28 +2,30 @@
 // are simulated, AI results are pre-built, refreshing resets the demo.
 //
 // The tender set deliberately covers every lifecycle situation:
-//  t1  fully processed, partly reviewed (34/120 clauses), BC v1-v3, MSPO downloaded
-//  t2  processed ATFM tender, BC v1 failing checks, ATFM template matched
-//  t3  commercial tender, processed, generic template fallback, no BC yet
+//  t1  fully processed, partly reviewed (34/120 clauses), BC v1 AI draft + v2-v3 edits, MSPO downloaded
+//  t2  processed ATFM tender, BC v2 edit failing checks, ATFM template matched
+//  t3  commercial tender, processed, generic template fallback, AI draft not reviewed yet
 //  t4  newly created, no documents
 //  t5  30 documents uploaded (some very large), never processed
-//  t6  processing in progress (stage 3 of 6)
+//  t6  processing in progress (stage 3 of 7)
 //  t7  half processed: 5 of 7 done, 2 failed, recently reprocessed (new/changed items)
 //  t8  processing failed entirely, Retry offered; deadline overdue
 //  t9  fully processed, nothing reviewed; title deliberately similar to t1
 //  t10 processed, then 2 documents added and 1 removed - results out of date
 //  t11 created without the optional GeBIZ ref and customer
-//  t12 business case upload whose layout was not recognised
+//  t12 business case edited so the billing plan no longer equals the TCV
 //  t13 agency tender with no agency template in the library (generic offered)
 //  t14 past DRB, Won        t15 past DRB, Lost        t16 closed and archived
 
-import { USERS } from '../config';
+import { DRB_APPROVERS, USERS, type UserInfo } from '../config';
+import { demoClassificationScore } from '../lib/confidence';
+import type { BusinessCaseState, Provenance } from '../businessCase/model';
+import { confirmProv, diffSummary } from '../businessCase/draft';
+import { evenBilling } from '../businessCase/generate';
+import { computeSummary, defaultVendorColumns } from '../businessCase/calc';
+import { aiDraftVersion, aiSources, outcomeRecord, withApproval, withSavedEdits } from '../businessCase/versions';
 import type {
   AuditEntry,
-  BcBilling,
-  BcProduct,
-  BcResource,
-  BcVersion,
   Boilerplate,
   ChecklistItem,
   Clause,
@@ -46,102 +48,6 @@ export const daysFromNow = (n: number) => {
 const tsAt = (daysAgo: number, hhmm = '10:05') =>
   `${daysFromNow(-daysAgo)}T${hhmm}:00+08:00`;
 
-// ---- Business case versions (tender T1) ------------------------------------
-
-const products = (over: Partial<BcProduct>[] = []): BcProduct[] => {
-  const base: BcProduct[] = [
-    { id: 'p1', ql: 1, category: 'Software', desc: 'Omnichannel CCaaS platform subscription (500 agents)', unitCost: 950, qty: 1500, total: 1425000 },
-    { id: 'p2', ql: 1, category: 'Hardware', desc: 'Agent workstations and certified headsets', unitCost: 1450, qty: 520, total: 754000 },
-    { id: 'p3', ql: 1, category: 'Hardware', desc: 'Session border controllers, HA pair', unitCost: 86000, qty: 2, total: 172000 },
-    { id: 'p4', ql: 2, category: 'External Service', desc: 'Independent penetration test (annual)', unitCost: 48000, qty: 3, total: 144000 },
-    { id: 'p5', ql: 3, category: 'Software', desc: 'SIEM log ingestion licence', unitCost: 88000, qty: 3, total: 264000 },
-  ];
-  return base.map((p) => ({ ...p, ...(over.find((o) => o.id === p.id) ?? {}) }));
-};
-
-const resources = (over: Partial<BcResource>[] = []): BcResource[] => {
-  const base: BcResource[] = [
-    // man-days per fiscal year (26/27 Sep-Mar 7 months, 27/28, 28/29, 29/30 Apr-Aug 5 months);
-    // one person at 18.5 man-days a month = 129.5 / 222 / 222 / 92.5
-    { id: 'r1', ql: 1, role: 'Project Manager', skill: 'Programme Management', grade: '7', team: 'Insys - Cloud - SG', fyMandays: [129.5, 222, 222, 92.5], mandays: 666, dayRate: 980, total: 652680 },
-    { id: 'r2', ql: 1, role: 'System Architect', skill: 'Solution Architecture', grade: '8', team: 'Insys - Cloud - SG', fyMandays: [129.5, 111, 0, 0], mandays: 240.5, dayRate: 1150, total: 276575 },
-    { id: 'r3', ql: 1, role: 'Analyst Programmer', skill: 'CCaaS Development', grade: '4', team: 'MY ODC - AD - MY', fyMandays: [259, 222, 222, 0], mandays: 703, dayRate: 640, total: 449920 },
-    { id: 'r4', ql: 2, role: 'Helpdesk Officer', skill: 'Onsite Desktop L1', grade: '3', team: 'Insys - Non-cloud - SG', fyMandays: [388.5, 666, 666, 277.5], mandays: 1998, dayRate: 210, total: 419580 },
-    { id: 'r5', ql: 3, role: 'Security Analyst', skill: 'SOC Analyst', grade: '4', team: 'PH ODC - MS - PH', fyMandays: [64.75, 222, 222, 46.25], mandays: 555, dayRate: 590, total: 327450 },
-  ];
-  return base.map((r) => ({ ...r, ...(over.find((o) => o.id === r.id) ?? {}) }));
-};
-
-const billing = (count: number, amount: number, last?: number): BcBilling[] =>
-  Array.from({ length: count }, (_, i) => ({
-    id: `b${i + 1}`,
-    date: (() => { const d = new Date(2026, 8 + i * 3, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; })(),
-    schedule: `Quarterly billing ${i + 1} of ${count}`,
-    amount: i === count - 1 && last !== undefined ? last : amount,
-  }));
-
-/** Fictitious Summary-tab cells of a mock workbook, at the template's cells:
- *  B6 TCV, B14 direct cost, B15 internal labour, B24 indirect cost, B50 EBITDA,
- *  C50 EBITDA % (the template's =B50/B6, a fraction). The app reads its
- *  headline figures from these via the MSPO "Business case figures" mapping. */
-const summaryCells = (tcv: number, direct: number, labour: number, indirect: number, ebitda: number) => ({
-  Summary: { B6: tcv, B14: direct, B15: labour, B24: indirect, B50: ebitda, C50: ebitda / tcv },
-});
-
-/** v1: consistent totals, but one product is assigned to a quote line that
- *  does not exist (QL rule fails, warning). */
-const v1: BcVersion = {
-  v: 1,
-  uploadedBy: 'Felicia Phan',
-  uploadedAt: tsAt(25),
-  fileName: 'NCCM_business_case_v1.xlsx',
-  comment: 'First cut from the workshop',
-  data: {
-    header: { tcv: 5350000, productTotal: 2759000, labourTotal: 2126205, marginPct: 16.6, currency: 'SGD', durationMonths: 36, projectStart: '2026-09-01' },
-    products: products([{ id: 'p5', ql: 4 }]), // QL4 does not exist
-    resources: resources(),
-    billing: billing(12, 445833, 445837),
-    cells: summaryCells(5350000, 4885205, 2126205, 195408, 269387),
-  },
-};
-
-/** v2: deliberately fails several checks (billing short of CCB, stated labour
- *  total does not reconcile, one day rate missing). */
-const v2: BcVersion = {
-  v: 2,
-  uploadedBy: 'Felicia Phan',
-  uploadedAt: tsAt(14, '16:40'),
-  fileName: 'NCCM_business_case_v2.xlsx',
-  comment: 'Post-clarification pricing; SOC scope enlarged',
-  data: {
-    header: { tcv: 5350000, productTotal: 2759000, labourTotal: 1900000, marginPct: 16.6, currency: 'SGD', durationMonths: 36, projectStart: '2026-09-01' },
-    products: products(),
-    resources: resources([{ id: 'r5', dayRate: 0, total: 0 }]),
-    billing: billing(11, 437727, 437730), // sums to 4,815,000 - short of CCB
-    cells: summaryCells(5350000, 4659000, 1900000, 186360, 504640),
-  },
-};
-
-/** v3: latest; reconciles except a low-margin advisory. MSPO generated. */
-const v3: BcVersion = {
-  v: 3,
-  uploadedBy: 'Felicia Phan',
-  uploadedAt: tsAt(7, '09:20'),
-  fileName: 'NCCM_business_case_v3.xlsx',
-  comment: 'Fixed billing plan and SOC day rate after Final Check',
-  mspoDownloadedAt: tsAt(6, '11:35'),
-  data: {
-    header: { tcv: 5350000, productTotal: 2759000, labourTotal: 2090685, marginPct: 9.4, currency: 'SGD', durationMonths: 36, projectStart: '2026-09-01' },
-    products: products([{ id: 'p2', unitCost: 1500, total: 780000 }, { id: 'p5', ql: 3 }]),
-    resources: resources([{ id: 'r3', fyMandays: [259, 222, 166.5, 0], mandays: 647.5, total: 414400 }]),
-    billing: billing(12, 445833, 445837),
-    cells: summaryCells(5350000, 4849685, 2090685, 193987, 306328),
-  },
-};
-// keep v3 header consistent with the p2/r3 changes
-v3.data.header.productTotal = v3.data.products.reduce((a, p) => a + p.total, 0);
-v3.data.header.labourTotal = v3.data.resources.reduce((a, r) => a + r.total, 0);
-
 // ---- Clause builders ---------------------------------------------------------
 
 const C = (
@@ -150,7 +56,7 @@ const C = (
 ): Clause => ({
   id: `c-${number.replace(/[^a-z0-9]/gi, '')}-${page}`,
   number, text, category, subTags, sourceDoc, page,
-  compliance: 'Unset', response: '', ...extra,
+  compliance: 'Unset', response: '', categoryConfidence: demoClassificationScore(`c-${number}-${page}`), ...extra,
 });
 
 const GR = 'General Requirements.pdf';
@@ -257,6 +163,7 @@ function genClauses(
       page: doc.firstPage + Math.floor(i / docs.length),
       compliance: 'Unset',
       response: '',
+      categoryConfidence: demoClassificationScore(`${prefix}-g${i + 1}`),
       reviewedBy: i < reviewedCount ? reviewers[i % reviewers.length] : undefined,
     });
     sub += 1;
@@ -371,7 +278,7 @@ const t1: Tender = {
       { templateId: 'tpl-generic-personnel', reason: 'Type: Agency, but MHA has no form template - generic offered' },
     ],
   },
-  bcVersions: [v1, v2, v3],
+  bcVersions: [],
   genDocs: [
     { id: 'g1', name: 'Compliance table (Annex A6)', templateId: 'tpl-mha-ct', status: 'Generated', autoFilled: ['Clause numbers and requirement text', 'Compliance statuses', 'Responses entered so far'], manual: ['Responses marked "Clarify"', 'Signatory block'] },
     { id: 'g2', name: 'Cover letter', templateId: 'tpl-mha-cl', status: 'Needs review', autoFilled: ['Tender reference and title', 'Company background paragraph'], manual: ['Pricing summary sentence'] },
@@ -440,30 +347,7 @@ const t2: Tender = {
       { templateId: 'tpl-generic-cl', reason: 'Type: Agency, but ATFM has no cover letter template - generic offered' },
     ],
   },
-  bcVersions: [
-    {
-      v: 1,
-      uploadedBy: 'Felicia Phan',
-      uploadedAt: tsAt(8, '14:00'),
-      fileName: 'ATFM_fleet_bc_v1.xlsx',
-      comment: 'Initial costing - labour summary still manual',
-      data: {
-        // Stated labour total does not reconcile with the lines (fails the
-        // reconciliation check); margin below guardrail (warning).
-        header: { tcv: 2140000, productTotal: 420000, labourTotal: 1480000, marginPct: 8.2, currency: 'SGD', durationMonths: 24, projectStart: '2027-01-01' },
-        products: [
-          { id: 'p1', ql: 1, category: 'Software', desc: 'Fleet maintenance management system licence', unitCost: 105000, qty: 2, total: 210000 },
-          { id: 'p2', ql: 1, category: 'Hardware', desc: 'Workshop diagnostic terminals', unitCost: 7000, qty: 30, total: 210000 },
-        ],
-        resources: [
-          { id: 'r1', ql: 1, role: 'Operation Manager', grade: '7', team: 'Insys - Non-cloud - SG', mandays: 480, dayRate: 850, total: 408000 },
-          { id: 'r2', ql: 1, role: 'Technical Engineer', grade: '4', team: 'Insys - Non-cloud - SG', mandays: 1860, dayRate: 560, total: 1041600 },
-        ],
-        billing: billing(8, 267500),
-        cells: summaryCells(2140000, 1900000, 1480000, 76000, 164000),
-      },
-    },
-  ],
+  bcVersions: [],
   genDocs: [
     { id: 'g1', name: 'Compliance matrix (ATFM format)', templateId: 'tpl-atfm-ct', status: 'Not generated', autoFilled: [], manual: [] },
     { id: 'g2', name: 'Cover letter', status: 'Not generated', autoFilled: [], manual: [] },
@@ -490,13 +374,13 @@ const t3: Tender = {
   lastProcessedAt: tsAt(6, '16:05'),
   pack: [
     { id: 'd1', name: t3GR, role: 'General Requirements', pages: 25, status: 'Done', textExtracted: true },
-    { id: 'd2', name: 'Data Protection Addendum.pdf', role: 'Legal Conditions', pages: 11, status: 'Done', textExtracted: true },
+    { id: 'd2', name: 'Data Protection Addendum.docx', role: 'Legal Conditions', pages: 11, status: 'Done', textExtracted: true },
     { id: 'd3', name: 'Volume Projections.xlsx', role: 'Commercial Conditions', pages: 4, status: 'Done', textExtracted: true },
   ],
   checklist: genChecklist('t3', t3GR, 'Volume Projections.xlsx', daysFromNow(49), ['Dana Lim', 'Felicia Phan', undefined]).slice(0, 8),
   quals: genQuals('t3', t3GR, t3GR).slice(0, 6),
   clauses: genClauses('t3', [
-    { name: t3GR, firstPage: 6 }, { name: 'Data Protection Addendum.pdf', firstPage: 2 },
+    { name: t3GR, firstPage: 6 }, { name: 'Data Protection Addendum.docx', firstPage: 2 },
   ], 25, ['Dana Lim'], 0, 2),
   templateSearch: {
     status: 'done',
@@ -632,7 +516,7 @@ const t7: Tender = {
   type: 'Agency',
   projectType: 'Milestone Based',
   status: 'Draft',
-  statusReason: 'In Approval (Draft)',
+  statusReason: 'Pending (Draft)',
   owner: 'Dana Lim',
   createdAt: daysFromNow(-16),
   closingDate: daysFromNow(3),
@@ -732,7 +616,7 @@ const t10: Tender = {
   type: 'Agency',
   projectType: 'Milestone Based',
   status: 'Draft',
-  statusReason: 'In Approval (Draft)',
+  statusReason: 'Pending (Draft)',
   owner: 'Dana Lim',
   createdAt: daysFromNow(-22),
   closingDate: daysFromNow(16),
@@ -816,28 +700,7 @@ const t12: Tender = {
   clauses: genClauses('t12', [
     { name: t12GR, firstPage: 5 }, { name: 'Security Policy Extract.pdf', firstPage: 2 },
   ], 26, ['John Price'], 4, 2),
-  bcVersions: [
-    {
-      v: 1,
-      uploadedBy: 'Felicia Phan',
-      uploadedAt: tsAt(2, '11:50'),
-      fileName: 'MOE_access_control_costing_old_format.xlsx',
-      comment: 'Costing from the old departmental workbook',
-      layoutUnrecognised: {
-        missingAnchors: [
-          'Sheet "Basic Info" with cell "CCB / Contract Value"',
-          'Sheet "Product Plan" with header row "Quote Line / Category / Description"',
-          'Sheet "Resource Plan" with header row "Role / Grade / Team"',
-        ],
-      },
-      data: {
-        header: { tcv: 0, productTotal: 0, labourTotal: 0, marginPct: 0, currency: 'SGD', durationMonths: 0, projectStart: daysFromNow(60) },
-        products: [],
-        resources: [],
-        billing: [],
-      },
-    },
-  ],
+  bcVersions: [],
   genDocs: [],
 };
 
@@ -907,27 +770,7 @@ const t14: Tender = {
   quals: genQuals('t14', t14GR, 'Service Catalogue.pdf').slice(0, 6),
   clauses: genClauses('t14', [{ name: t14GR, firstPage: 5 }, { name: 'Service Catalogue.pdf', firstPage: 4 }], 26, ['Felicia Phan', 'John Price'], 26, 2)
     .map((c) => ({ ...c, compliance: 'Comply' as const })),
-  bcVersions: [
-    {
-      v: 1,
-      uploadedBy: 'Felicia Phan',
-      uploadedAt: '2025-11-20T09:00:00+08:00',
-      fileName: 'CPF_helpdesk_bc_final.xlsx',
-      comment: 'DRB-approved version',
-      mspoDownloadedAt: '2025-12-01T15:00:00+08:00',
-      data: {
-        header: { tcv: 3200000, productTotal: 900000, labourTotal: 1820000, marginPct: 14.2, currency: 'SGD', durationMonths: 36, projectStart: '2026-02-01' },
-        products: [
-          { id: 'p1', ql: 1, category: 'Software', desc: 'ITSM platform subscription', unitCost: 300000, qty: 3, total: 900000 },
-        ],
-        resources: [
-          { id: 'r1', ql: 1, role: 'Service Manager', grade: '6', team: 'Insys - Cloud - SG', mandays: 650, dayRate: 800, total: 520000 },
-          { id: 'r2', ql: 1, role: 'Service Desk Analyst', grade: '3', team: 'MY ODC - AD - MY', mandays: 3250, dayRate: 400, total: 1300000 },
-        ],
-        billing: Array.from({ length: 4 }, (_, i) => ({ id: `b${i + 1}`, date: iso(new Date(2026, 1 + i * 9, 1)), schedule: `Annual billing ${i + 1} of 4`, amount: 800000 })),
-      },
-    },
-  ],
+  bcVersions: [],
   genDocs: [],
 };
 
@@ -954,20 +797,7 @@ const t15: Tender = {
   checklist: genChecklist('t15', 'RFP Document.pdf', 'RFP Document.pdf', '2026-02-02', ['Felicia Phan']).slice(0, 8).map((k) => ({ ...k, status: 'Done' as const })),
   quals: genQuals('t15', 'RFP Document.pdf', 'RFP Document.pdf').slice(0, 6),
   clauses: genClauses('t15', [{ name: 'RFP Document.pdf', firstPage: 5 }], 25, ['Felicia Phan'], 25, 2),
-  bcVersions: [
-    {
-      v: 1,
-      uploadedBy: 'Felicia Phan',
-      uploadedAt: '2026-01-20T10:00:00+08:00',
-      fileName: 'HMB_service_desk_bc.xlsx',
-      data: {
-        header: { tcv: 1850000, productTotal: 420000, labourTotal: 1150000, marginPct: 15.1, currency: 'SGD', durationMonths: 24, projectStart: '2026-05-01' },
-        products: [{ id: 'p1', ql: 1, category: 'Software', desc: 'Service desk tooling', unitCost: 210000, qty: 2, total: 420000 }],
-        resources: [{ id: 'r1', ql: 1, role: 'Service Desk Analyst', grade: '3', team: 'PH ODC - MS - PH', mandays: 2875, dayRate: 400, total: 1150000 }],
-        billing: Array.from({ length: 8 }, (_, i) => ({ id: `b${i + 1}`, date: iso(new Date(2026, 4 + i * 3, 1)), schedule: `Quarterly billing ${i + 1} of 8`, amount: 231250 })),
-      },
-    },
-  ],
+  bcVersions: [],
   genDocs: [],
 };
 
@@ -1001,7 +831,7 @@ const t16: Tender = {
 
 const wonTender = (
   id: string, sfdc: string, ref: string, name: string, agency: string,
-  closingDate: string, createdAt: string, tcv: number, marginPct: number,
+  closingDate: string, createdAt: string,
 ): Tender => ({
   id,
   sfdcCrmId: sfdc,
@@ -1024,28 +854,90 @@ const wonTender = (
   checklist: [],
   quals: [],
   clauses: [],
-  bcVersions: [
-    {
-      v: 1,
-      uploadedBy: 'Felicia Phan',
-      uploadedAt: `${createdAt}T15:00:00+08:00`,
-      fileName: `${ref.replace(/\W+/g, '_')}_bc_final.xlsx`,
-      comment: 'DRB-approved version',
-      data: {
-        header: { tcv, productTotal: Math.round(tcv * 0.35), labourTotal: Math.round(tcv * 0.45), marginPct, currency: 'SGD', durationMonths: 24, projectStart: closingDate },
-        products: [{ id: 'p1', ql: 1, category: 'Software', desc: 'Platform licences', unitCost: Math.round(tcv * 0.35), qty: 1, total: Math.round(tcv * 0.35) }],
-        resources: [{ id: 'r1', ql: 1, role: 'Project Manager', grade: '7', team: 'Insys - Cloud - SG', mandays: Math.round(tcv * 0.45 / 900), dayRate: 900, total: Math.round(tcv * 0.45 / 900) * 900 }],
-        billing: [{ id: 'b1', date: closingDate, schedule: 'Milestone billing 1 of 1', amount: tcv }],
-      },
-    },
-  ],
+  bcVersions: [],
   genDocs: [],
 });
 
-const t17 = wonTender('t17', 'OPP-004201', 'MOH/ITT/2025/204', 'Polyclinic Appointment System Revamp', 'MOH Holdings', '2026-02-27', '2025-12-01', 1900000, 13.8);
-const t18 = wonTender('t18', 'OPP-004388', 'CUS/RFP/2026/041', 'Customs Declarations Portal Enhancements', 'Singapore Customs', '2026-08-14', '2026-05-20', 2450000, 15.2);
+const t17 = wonTender('t17', 'OPP-004201', 'MOH/ITT/2025/204', 'Polyclinic Appointment System Revamp', 'MOH Holdings', '2026-02-27', '2025-12-01');
+const t18 = wonTender('t18', 'OPP-004388', 'CUS/RFP/2026/041', 'Customs Declarations Portal Enhancements', 'Singapore Customs', '2026-08-14', '2026-05-20');
 
 export const TENDERS: Tender[] = [t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18];
+
+// ---- Business cases: TendrAI drafts v1 when processing completes ---------------
+
+/** Deal sizes of the past tenders, so the Won TCV cards show known values. */
+const TARGET_TCV: Record<string, number> = { t14: 3200000, t15: 1850000, t17: 1900000, t18: 2450000 };
+
+/** Saves an edit to the latest (working) version. */
+function saveEdit(t: Tender, by: string, at: string, comment: string, edit: (bc: BusinessCaseState) => BusinessCaseState) {
+  const prev = t.bcVersions[t.bcVersions.length - 1];
+  const bc = edit(prev.bc);
+  t.bcVersions = withSavedEdits(t.bcVersions, bc, by, at, diffSummary(prev.bc, bc), comment);
+}
+
+/** Records DRB approvals on the latest version, one timestamp per approver. */
+function approveBy(t: Tender, who: UserInfo[], at: string[]) {
+  const v = t.bcVersions[t.bcVersions.length - 1].v;
+  t.bcVersions = who.reduce((acc, u, i) => withApproval(acc, v, u, at[i]), t.bcVersions);
+}
+
+const confirmAll =<T extends { provenance: Provenance }>(items: T[], by: string) =>
+  items.map((x) => (x.provenance.kind === 'human' ? x : { ...x, provenance: confirmProv(x.provenance, by, false) }));
+
+function seedBusinessCases() {
+  for (const t of TENDERS) {
+    if (!t.lastProcessedAt || t.processFailed) continue;
+    t.bcVersions = [aiDraftVersion(t, t.lastProcessedAt, { targetTcv: TARGET_TCV[t.id], sources: aiSources(REPOSITORY, t.id) })];
+  }
+  const felicia = 'Felicia Phan';
+  // t1 is in its third DRB round. v1 (AI draft, workstations repriced) and v2
+  // (billing and vendor payments regenerated) were approved by all three DRB
+  // members; v3 (resources confirmed) has two of the three approvals so far
+  saveEdit(t1, felicia, tsAt(20, '16:40'), 'Post-clarification pricing for agent workstations', (bc) => ({
+    ...bc,
+    productItems: confirmAll(bc.productItems, felicia).map((p) =>
+      p.id === 'p3' ? { ...p, unitCost: Math.round(p.unitCost * 1.035), provenance: confirmProv(p.provenance, felicia, true) } : p),
+  }));
+  approveBy(t1, DRB_APPROVERS, [tsAt(18, '10:05'), tsAt(17, '15:30'), tsAt(16, '09:45')]);
+  saveEdit(t1, felicia, tsAt(12, '09:20'), 'Billing plan and vendor payments regenerated after Final Check', (bc) => ({
+    ...bc,
+    billing: evenBilling(bc, 3, 'Quarterly').map((b) => ({ ...b, provenance: { kind: 'human' as const, confirmedBy: felicia } })),
+    vendorCols: defaultVendorColumns(bc, computeSummary(bc).durationMonths),
+  }));
+  approveBy(t1, DRB_APPROVERS, [tsAt(10, '11:20'), tsAt(9, '14:10'), tsAt(9, '17:55')]);
+  saveEdit(t1, felicia, tsAt(6, '10:30'), 'Labour lines confirmed for the final DRB pack', (bc) => ({
+    ...bc,
+    resourceItems: confirmAll(bc.resourceItems, felicia),
+  }));
+  t1.bcVersions[t1.bcVersions.length - 1].mspoDownloadedAt = tsAt(5, '11:35');
+  approveBy(t1, DRB_APPROVERS.slice(0, 2), [tsAt(4, '10:15'), tsAt(3, '17:40')]);
+  // past tenders: v1 approved by every DRB member, archived; v2 is the working copy
+  const pastApproval: Record<string, string> = { t14: '2025-11-24', t15: '2026-01-26', t17: '2026-01-20', t18: '2026-07-15' };
+  for (const [id, day] of Object.entries(pastApproval)) {
+    const t = TENDERS.find((x) => x.id === id)!;
+    approveBy(t, DRB_APPROVERS, ['09:30', '11:05', '15:20'].map((hm) => `${day}T${hm}:00+08:00`));
+    // outcome recorded: lessons learned, and the approved case filed as an AI source
+    if (t.drbNotes) t.lessons = { text: t.drbNotes, by: t.owner, at: `${t.closingDate}T17:00:00+08:00` };
+    const record = outcomeRecord(t, t.status === 'Won' ? 'Won' : 'Lost', REPOSITORY, `${t.closingDate}T17:00:00+08:00`);
+    // t14's case is already on file (its seeded history is kept; lessons added below)
+    if (record && !REPOSITORY.some((r) => r.id === record.id)) REPOSITORY.push(record);
+  }
+  const linked = REPOSITORY.find((r) => r.tenderId === 't14');
+  if (linked) linked.lessons = TENDERS.find((x) => x.id === 't14')?.lessons?.text;
+  // t2: margins cut to price competitively - below the guardrail, billing short
+  saveEdit(t2, felicia, tsAt(8, '14:00'), 'Margins cut to match the incumbent', (bc) => ({
+    ...bc,
+    quoteLines: bc.quoteLines.map((q) => ({ ...q, marginPct: 0.08, provenance: confirmProv(q.provenance, felicia, true) })),
+  }));
+  // t12: an extra hardware line added without re-dividing the billing plan
+  saveEdit(t12, felicia, tsAt(2, '11:50'), 'Added card readers for the annex campuses', (bc) => ({
+    ...bc,
+    productItems: [...bc.productItems, {
+      id: 'p11', quoteLine: 1, category: 'Hardware', description: 'Card readers for annex campuses', vendor: 'NetEdge Distribution',
+      vendorCommitment: false, unitCost: 420, qtyByFY: [180, 0, 0], remarks: '', provenance: { kind: 'human', confirmedBy: felicia },
+    }],
+  }));
+}
 
 // ---- Template and boilerplate libraries -------------------------------------
 
@@ -1236,11 +1128,26 @@ const docsFor = (r: RepoSeed): string[] => {
   }
 };
 
-export const REPOSITORY: RepoRecord[] = [...linkedRecords, ...generatedRecords].map((r) => ({
+/** Citation ids of the business cases the reference drafts cite. */
+const BC_REF_IDS: Record<string, string> = { rr7: 'BC-2024-012', rr10: 'BC-2023-041' };
+/** Tenders the linked business case records were filed from. */
+const BC_TENDER: Record<string, string> = { rr2: 't1', rr7: 't14' };
+
+export const REPOSITORY: RepoRecord[] = [...linkedRecords, ...generatedRecords].map((r, i) => ({
   ...r,
   statusReason: reasonFor(r.status),
   documents: r.documents ?? docsFor(r),
+  // business cases feed AI drafts: won ones preferred, lost/closed standard,
+  // open ones (not final yet) never used
+  ...(r.kind === 'Business case' ? {
+    aiSource: r.status === 'Won' ? 'preferred' as const : r.status === 'Open' ? undefined : 'standard' as const,
+    refId: BC_REF_IDS[r.id] ?? `BC-${r.created.slice(0, 4)}-${String(100 + i).padStart(3, '0')}`,
+    tenderId: BC_TENDER[r.id],
+  } : {}),
 }));
+
+// TendrAI drafts each processed tender's business case from the sources above
+seedBusinessCases();
 
 // ---- Audit log seed ---------------------------------------------------------
 // Derived from the records above so the log agrees with every list and detail
@@ -1273,8 +1180,15 @@ function buildSeedAudit(): AuditEntry[] {
     if (t.processFailed) add(at(t.createdAt, 60 * 24 * 3), SYSTEM, 'Processing failed', 'Analysis service unavailable - no results produced', ref, 'Documents');
     if (t.templateSearch?.ranAt) add(t.templateSearch.ranAt, t.owner, 'Templates matched', `${t.templateSearch.matches.length} suitable template(s) found`, ref, 'Submission');
     for (const v of t.bcVersions) {
-      add(v.uploadedAt, v.uploadedBy, 'Business case uploaded', `v${v.v} - ${v.fileName}${v.comment ? ` ("${v.comment}")` : ''}`, ref, 'Business case');
-      if (v.mspoDownloadedAt) add(v.mspoDownloadedAt, v.uploadedBy, 'MSPO templates downloaded', `Product and resource plans generated from v${v.v}`, ref, 'MSPO templates');
+      if (v.origin === 'ai-draft') add(at(v.createdAt, 1), SYSTEM, 'Business case drafted', `v${v.v} - ${v.data.products.length} product lines, ${v.data.resources.length} labour lines and a billing plan drafted from the tender pack`, ref, 'Business case');
+      for (const e of v.edits ?? []) add(e.at, e.by, 'Business case saved', `v${v.v} - ${e.summary}${e.comment ? ` ("${e.comment}")` : ''}`, ref, 'Business case');
+      (v.approvals ?? []).forEach((a, i) => {
+        const last = !!v.approvedAt && i === (v.approvals?.length ?? 0) - 1;
+        add(a.at, a.by, last ? 'Business case approved' : 'Business case approval recorded',
+          last ? `v${v.v} approved by all ${DRB_APPROVERS.length} DRB members; v${v.v} archived read-only, working copy v${v.v + 1} created` : `v${v.v} (${i + 1} of ${DRB_APPROVERS.length} DRB approvals)`,
+          ref, 'Business case');
+      });
+      if (v.mspoDownloadedAt) add(v.mspoDownloadedAt, v.savedBy, 'MSPO templates downloaded', `Product and resource plans generated from v${v.v}`, ref, 'MSPO templates');
     }
     for (const c of t.clauses.filter((x) => x.reviewedBy).slice(0, 2)) {
       add(at(t.lastProcessedAt ?? t.createdAt, 60 * 26), c.reviewedBy!, 'Clause updated', `Clause ${c.number}: category confirmed as ${c.category}`, ref, 'Clauses');

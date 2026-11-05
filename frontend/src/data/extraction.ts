@@ -4,6 +4,7 @@
 
 import type { ChecklistItem, Clause, Qualification, Tender } from '../types';
 import { daysFromNow } from './mock';
+import { demoClassificationScore } from '../lib/confidence';
 
 export interface ExtractedTenderData {
   checklist: ChecklistItem[];
@@ -60,6 +61,7 @@ export function buildDemoExtraction(tender: Tender): ExtractedTenderData {
     sourceDoc,
     page,
     compliance: 'Unset',
+    categoryConfidence: demoClassificationScore(`${tender.id}-c-${number}`),
     response: '',
   });
 

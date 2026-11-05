@@ -16,7 +16,8 @@ description: Use when editing anything in docs/, any README.md (root, api/, infr
 | `infra/README.md` | Architecture → file mapping, layout, processing workflow, feature flags, Floci local testing, deploying to AWS, security posture | module inputs/outputs, resources, deploy steps change |
 | `infra/envs/demo/README.md` | Static demo hosting for the V1 POC: connect, deploy, update, access control, teardown | demo env changes |
 | `db/README.md` | Entity map, frontend → table mapping, design notes, S3 layout | schema, enum or S3 key layout changes |
-| `frontend/legacy/app-v1/README.md`, `DEMO_GUIDE.md`, `WALKTHROUGH.md` | Frozen V1 POC notes, demo script and walkthrough (V1 had the AI draft a costed business case, which the current product does not do) | only when asked (the POC is frozen) |
+| `frontend/legacy/app-v1/README.md`, `DEMO_GUIDE.md`, `WALKTHROUGH.md` | Frozen V1 POC notes, demo script and walkthrough (V3 brought back V1's AI-drafted business case, inside the V2 interface) | only when asked (the POC is frozen) |
+| `frontend/legacy/app-v2/README.md` | Frozen V2 (Excel business case upload) notes | only when asked (frozen) |
 
 ## Intended `docs/` structure: not set up yet
 CLAUDE.md and the root README say `docs/` holds architecture, API and runbooks, but only `USER_GUIDE.md` exists. Proposed layout (ask before creating it, and move content rather than duplicate it):
@@ -80,7 +81,7 @@ Commands touching real AWS (`prod`, `demo`) must say so in bold before the step.
   - Prefer the root-relative forms from CLAUDE.md: `npm --prefix api ...`, `terraform -chdir=infra/envs/<env> ...`.
 - Links are relative: `[infra/README.md](infra/README.md#local-testing-with-floci)`. Adjust `../` from inside `docs/`. External links are only for third-party tools.
 - Use the domain vocabulary from CLAUDE.md (Tender, Tender pack, Document, Clause, Business case, Version, Check, MSPO template, DRB). Status names must match `db/schema.sql` exactly.
-- Docs must not claim the AI produces costs or business cases. Business case figures come from the uploaded Excel, as read.
+- The AI drafts only the FIRST business case version (v1); people review, edit and save every later version. Docs must say that AI-drafted values are cited or marked as estimates until a person confirms them, and that MSPO and the DRB use the latest saved version. (V2, frozen in frontend/legacy/app-v2, used an uploaded Excel business case instead.)
 - Keep each fact in one place and link to it from elsewhere. For example, error codes live in api/README.md "Conventions" and are not repeated per doc.
 
 ## Checklist after a code change

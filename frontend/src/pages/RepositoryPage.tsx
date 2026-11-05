@@ -13,7 +13,7 @@ import { useStore } from '../state/store';
 import { Pager, SortTh, StatusPill, usePagedTable, useColFilters, useSort } from '../components/common';
 import { Button, ConfirmDialog, IconButton } from '../ui/ui';
 import { useToast } from '../ui/toast';
-import type { RepoRecord } from '../types';
+import type { AiSourceUse, RepoRecord } from '../types';
 
 /** Simulated restore duration. The real restore from archive storage takes up
  *  to several hours - the UI promises a range, never an exact time. */
@@ -93,6 +93,7 @@ export default function RepositoryPage() {
               <SortTh label="Status reason" k="statusReason" sort={sort} onToggle={toggle} {...fcol('statusReason')} />
               <SortTh label="Created at" k="created" sort={sort} onToggle={toggle} />
               <SortTh label="Last updated" k="updated" sort={sort} onToggle={toggle} />
+              <th title="How the AI may use a business case when drafting new ones">AI draft source</th>
               <th aria-label="Archive actions" />
             </tr>
           </thead>
@@ -100,6 +101,8 @@ export default function RepositoryPage() {
             {pager.slice.map((r) => {
               const open = expanded === r.id;
               const locked = filesLocked(r);
+              // past business cases hold other customers' prices
+              const restricted = r.kind === 'Business case' && !canDo.viewHistoricalPricing(state.role);
               return (
                 <Fragment key={r.id}>
                   <tr>
@@ -130,6 +133,26 @@ export default function RepositoryPage() {
                     </td>
                     <td className="muted" style={{ whiteSpace: 'nowrap' }}>{dateShort(r.created)}</td>
                     <td className="muted" style={{ whiteSpace: 'nowrap' }}>{dateShort(r.updated)}</td>
+                    <td>
+                      {r.kind !== 'Business case' ? <span className="muted">-</span>
+                        : r.status === 'Open' ? <span className="muted small" title="Only final business cases are used as AI sources">Not used (open)</span>
+                        : (
+                          <select
+                            value={r.aiSource ?? 'excluded'}
+                            aria-label={`How the AI may use ${r.name}`}
+                            disabled={!editable}
+                            title={editable ? 'Preferred: cited first (won cases). Standard: used, weighted lower (lost or closed). Excluded: never used, e.g. stale or unrepresentative.' : 'Only the BD team changes AI sources'}
+                            onChange={(e) => {
+                              dispatch({ type: 'set-ai-source', recordId: r.id, use: e.target.value as AiSourceUse });
+                              toast.push('success', 'AI source updated', `${r.name} is now ${e.target.value === 'excluded' ? 'excluded from' : `a ${e.target.value} source for`} new AI business case drafts.`);
+                            }}
+                          >
+                            <option value="preferred">Preferred</option>
+                            <option value="standard">Standard</option>
+                            <option value="excluded">Excluded</option>
+                          </select>
+                        )}
+                    </td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       {r.status === 'Archived' ? (
                         r.restore?.state === 'requested' ? (
@@ -168,8 +191,14 @@ export default function RepositoryPage() {
                   {open && (
                     <tr className="expand-row">
                       <td />
-                      <td colSpan={8}>
+                      <td colSpan={9}>
                         {locked && <div className="muted small" style={{ margin: '4px 0' }}>{lockTitle}.</div>}
+                        {restricted && <div className="muted small" style={{ margin: '4px 0' }}>Past business case files are available to BD, Presales, Finance and the DRB only.</div>}
+                        {r.lessons && (
+                          <div className="small" style={{ margin: '4px 0' }}>
+                            <b>Lessons learned:</b> <span className="muted">{r.lessons}</span>
+                          </div>
+                        )}
                         <div className="two-col">
                           <div>
                             <div className="muted small" style={{ margin: '4px 0' }}>Stored documents:</div>
@@ -179,7 +208,7 @@ export default function RepositoryPage() {
                                   <tr key={name}>
                                     <td><FileText size={13} aria-hidden style={{ verticalAlign: '-2px' }} /> {name}</td>
                                     <td className="table-actions" style={{ width: 48 }}>
-                                      {!locked && <IconButton label={`Download ${name}`} icon={Download} onClick={() => downloadFile(r, name)} />}
+                                      {!locked && !restricted && <IconButton label={`Download ${name}`} icon={Download} onClick={() => downloadFile(r, name)} />}
                                     </td>
                                   </tr>
                                 ))}
@@ -198,7 +227,7 @@ export default function RepositoryPage() {
                                     <td className="muted">{dateShort(v.date)} · {v.by}</td>
                                     <td>{v.note}</td>
                                     <td className="table-actions" style={{ width: 48 }}>
-                                      {!locked && <IconButton label={`Download v${v.v}`} icon={Download} onClick={() => downloadFile(r, `${r.name}_v${v.v}`)} />}
+                                      {!locked && !restricted && <IconButton label={`Download v${v.v}`} icon={Download} onClick={() => downloadFile(r, `${r.name}_v${v.v}`)} />}
                                     </td>
                                   </tr>
                                 ))}
@@ -213,7 +242,7 @@ export default function RepositoryPage() {
               );
             })}
             {sorted.length === 0 && (
-              <tr><td colSpan={9} className="muted">No records match these filters. Archived records are included.</td></tr>
+              <tr><td colSpan={10} className="muted">No records match these filters. Archived records are included.</td></tr>
             )}
           </tbody>
         </table>

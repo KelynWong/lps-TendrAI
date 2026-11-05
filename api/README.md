@@ -201,7 +201,7 @@ merged through the bus; stale instances age out after 60 s.
 | `template-search-*`, `patch-checklist` (template, draft) | `POST …/template-search`, `PATCH …/checklist/:itemId`, `…/draft` |
 | `patch-qual` | `PATCH …/qualifications/:qualId`, `POST …/qualifications/match` |
 | `patch-clause`, `save-clauses` | `PUT …/clauses` or WebSocket `save` |
-| `upload-bc`, `delete-bc-version` | business case routes |
+| `save-bc`, `approve-bc-version` (V3) | business case routes. The API still implements the V2 upload (presign / confirm) and version delete; V3 "save business case" and "approve version" are not built yet, see [V3 backend follow-up](../docs/USER_GUIDE.md#v3-backend-follow-up) |
 | `set-mspo-details`, `set-mspo-meta`, `set-mspo-rows`, `set-mspo-mapping`, `reset-mspo-mapping` | `PUT …/mspo/details`, `PUT/DELETE …/mspo/mapping` |
 | `upload-template`, `upload-boilerplate`, `update-*`, `delete-*` | library routes |
 | `upsert-rule`, `delete-rule`, `set-mspo-defaults` | rules routes |

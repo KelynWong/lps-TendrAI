@@ -23,7 +23,8 @@ main { flex: 1; overflow-y: auto; padding: 0 var(--sp-6) var(--sp-12); scroll-pa
 main > *:first-child { padding-top: var(--sp-4); }
 .footer {
   padding: var(--sp-2) var(--sp-6); border-top: 1px solid var(--border);
-  background: var(--surface); text-align: right; flex: none;
+  background: var(--surface); flex: none;
+  display: flex; justify-content: space-between; align-items: center; gap: var(--sp-4);
 }
 
 /* Focus visibility (WCAG 2.2): every interactive element */
@@ -500,6 +501,8 @@ select { font: inherit; font-size: var(--fs-dense); padding: 3px 6px; border: 1p
 .spreadsheet-grid thead th { top: 0; }
 .spreadsheet-grid tbody th { left: 0; min-width: 42px; }
 .spreadsheet-grid .spreadsheet-corner { left: 0; z-index: 2; min-width: 42px; }
+/* the cited cell: same highlight as a cited passage (.docpage .match) */
+.spreadsheet-grid td.match { background: var(--brand-purple-subtle); outline: 2px solid var(--brand-purple); outline-offset: -2px; }
 .spreadsheet-tabs {
   display: flex;
   flex: 0 0 auto;
@@ -623,7 +626,10 @@ select { font: inherit; font-size: var(--fs-dense); padding: 3px 6px; border: 1p
 .back-link:hover { text-decoration: underline; }
 
 /* ---- Login -------------------------------------------------------------------------------- */
-.login-wrap { min-height: 100vh; display: grid; grid-template-columns: 1.1fr 1fr; }
+.login-wrap { min-height: 100vh; display: grid; grid-template-columns: 1.1fr 1fr; position: relative; }
+/* TendrAI version, bottom left (on the purple hero; on the panel when the hero is hidden) */
+.login-version { position: absolute; left: var(--sp-4); bottom: var(--sp-3); font-size: var(--fs-label); color: #e8dcea; }
+@media (max-width: 900px) { .login-version { color: var(--ink-secondary); } }
 @media (max-width: 900px) { .login-wrap { grid-template-columns: 1fr; } .login-hero { display: none; } }
 .login-hero { background: var(--brand-purple-pressed); color: #fff; display: flex; align-items: center; padding: var(--sp-12); }
 .login-hero-inner { max-width: 520px; }

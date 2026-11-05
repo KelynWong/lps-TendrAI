@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { Check } from 'lucide-react';
 import { APP_NAME, DEMO_PASSWORD, USERS } from '../config';
 import { useStore } from '../state/store';
+import { APP_VERSION } from '../version';
 
 export default function LoginPage() {
   const { dispatch } = useStore();
@@ -99,6 +100,7 @@ export default function LoginPage() {
           )}
         </form>
       </div>
+      <div className="login-version">TendrAI {APP_VERSION}</div>
     </div>
   );
 }

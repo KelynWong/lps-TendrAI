@@ -25,10 +25,14 @@ export const USERS: UserInfo[] = [
 
 export const DEMO_PASSWORD = 'Demo2026!';
 
+/** The DRB members; a business case version is approved once all of them approve it. */
+export const DRB_APPROVERS = USERS.filter((u) => u.role === 'drb');
+
 /** What each role can do. Hidden = the role never uses it; disabled = shown
  *  greyed with a tooltip saying why. */
 export const canDo = {
-  uploadBc: (r: Role) => r === 'bd',
+  /** edit the AI-drafted business case and save versions */
+  editBc: (r: Role) => r === 'bd',
   downloadMspo: (r: Role) => r === 'bd',
   uploadPack: (r: Role) => r === 'bidding-manager',
   editChecklist: (r: Role) => r === 'bidding-manager',
@@ -40,6 +44,12 @@ export const canDo = {
   /** Final Check rules and MSPO mapping defaults */
   manageRules: (r: Role) => r === 'bd',
   recordOutcome: (r: Role) => r === 'drb',
+  /** see the past business cases (other customers' prices) an AI line was drafted from */
+  viewHistoricalPricing: (r: Role) => r === 'bd' || r === 'presales' || r === 'finance' || r === 'drb',
+  /** record lessons learned once a tender's outcome is known */
+  recordLessons: (r: Role) => r === 'bd' || r === 'bidding-manager',
+  /** approve a business case version (every DRB member must approve) */
+  approveBc: (r: Role) => r === 'drb',
   /** commercial figures (Won TCV, needs attention, TCV/cost/EBITDA columns) */
   viewFinancials: (r: Role) => r === 'finance' || r === 'drb',
   /** Finance and the DRB only ever review: every tender is read-only for them */

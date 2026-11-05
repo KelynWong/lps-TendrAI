@@ -7,6 +7,7 @@ import { StoreProvider, useStore } from './state/store';
 import { LeaveGuardProvider, useLeaveGuard } from './lib/leaveGuard';
 import { ToastProvider, useToast } from './ui/toast';
 import LoginPage from './pages/LoginPage';
+import { APP_VERSION } from './version';
 import TendersPage from './pages/TendersPage';
 import TemplatesPage from './pages/TemplatesPage';
 import RepositoryPage from './pages/RepositoryPage';
@@ -145,7 +146,10 @@ function Shell() {
         {page === 'rules' && <RulesPage />}
         {page === 'audit' && <AuditPage />}
       </main>
-      <footer className="footer muted small">© 2026 Lenovo PCCW Solutions</footer>
+      <footer className="footer muted small">
+        <span>TendrAI {APP_VERSION}</span>
+        <span>© 2026 Lenovo PCCW Solutions</span>
+      </footer>
     </div>
   );
 }

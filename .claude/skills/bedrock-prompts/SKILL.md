@@ -68,7 +68,7 @@ Not formalised in code yet; this is what `db/schema.sql` and `api/src/types.ts` 
 - Clause and requirement numbers are copied verbatim from the source (`clauses.number` comment: "EXACT numbering"). Never renumber, normalise (`4.2.1` vs `4.2.1.`), fill gaps or infer missing numbers. Empty string if the source has none.
 - Clause and requirement text is quoted, not paraphrased or summarised.
 - Figures, amounts, dates and percentages are never rounded, converted or rewritten.
-- The AI never generates costs, prices, business cases or compliance decisions (CLAUDE.md). Drafts fill templates from tender text and library content only.
+- The AI never makes compliance decisions, and never changes a business case version a person saved (CLAUDE.md). Since V3 it drafts the FIRST business case (v1) from the tender pack and retrieved historical business cases: every drafted line must carry a citation (historical record id or tender clause) or be marked as an estimate, and figures quoted from a source are copied, never rewritten. The V3 business-case prompt is not written yet (frontend demo only); write it with this skill when the backend follow-up starts.
 - Prefer "not found" over invention: missing deadline -> `null`, unknown category -> fail validation, not a guess.
 
 ## Logging and data handling

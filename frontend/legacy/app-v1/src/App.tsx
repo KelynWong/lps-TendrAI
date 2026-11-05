@@ -9,6 +9,7 @@ import HistoricalPage from './pages/HistoricalPage';
 import AuditPage from './pages/AuditPage';
 import AdminPage from './pages/AdminPage';
 import LoginPage from './pages/LoginPage';
+import { APP_VERSION } from './version';
 
 export interface AuditPrefill {
   tender?: string;
@@ -124,7 +125,10 @@ function Shell() {
         {page === 'audit' && <AuditPage prefill={auditPrefill} />}
         {page === 'admin' && user.role === 'admin' && <AdminPage />}
       </main>
-      <footer className="footer muted small">© 2026 Lenovo PCCW Solutions</footer>
+      <footer className="footer muted small">
+        <span>TendrAI {APP_VERSION}</span>
+        <span>© 2026 Lenovo PCCW Solutions</span>
+      </footer>
     </div>
     </NavCtx.Provider>
   );

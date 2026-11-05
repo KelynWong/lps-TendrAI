@@ -1,16 +1,19 @@
 // MSPO template auto-fill. Each template column (after the three hidden
 // "(Do Not Modify)" system columns) has one source:
-//  - workbook: read from a business case tab, starting at a cell and running
-//              down to the last row, across the fiscal-year columns, or both
-//  - mspo:     a value created in MSPO first (the quote line is keyed in once
-//              per tender and shared by all three plans; per-row MSPO values
-//              are keyed in after download)
-//  - manual:   keyed in row by row after download (left blank)
-// The last row and the number of fiscal-year columns differ per business case,
-// so each tender confirms them.
+//  - workbook:   a field of the business case in the web app (the app is the
+//                source of truth), e.g. Product Plan > Unit cost. One MSPO row
+//                per business case line (product lines once per fiscal year,
+//                labour lines once per person per fiscal year).
+//  - mspo:       a value created in MSPO first (the quote line is keyed in once
+//                per tender and shared by all three plans; per-row MSPO values
+//                are keyed in after download)
+//  - manual:     keyed in row by row after download (left blank)
+//  - calculated: man-days per month on the resource plan
+// The source value 'workbook' is kept from the stored mapping vocabulary
+// (map_source enum); it is shown as "Business case".
 
 import * as XLSX from 'xlsx';
-import type { BcResource, BcVersionData, Tender } from '../types';
+import type { BcBilling, BcProduct, BcResource, BcVersionData, Tender } from '../types';
 import { writeXlsxWithDropdowns, type ListValidation } from '../lib/xlsxDropdown';
 
 export const PRODUCT_SHEET = 'Sub Grid For Quote Line';
@@ -19,37 +22,92 @@ export const BILLING_SHEET = 'Billing Plans For Quoteline';
 
 const DNM = (plan: string) => [`(Do Not Modify) ${plan}`, '(Do Not Modify) Row Checksum', '(Do Not Modify) Modified On'];
 
-/** The workbook tabs a template column can be filled from. */
-export const BC_TABS = [
-  'Basic Info', 'Summary', 'Cash Flow', 'Product Plan', 'Resource Plan', 'Working', 'Labour Inputs',
-] as const;
-
 export type MapSource = 'workbook' | 'mspo' | 'manual' | 'calculated';
-/** How a workbook range extends from its first cell. */
-export type MapSpan = 'single' | 'rows' | 'cols' | 'rows-cols';
-
-export const SPAN_LABEL: Record<MapSpan, string> = {
-  single: 'Single cell',
-  rows: 'Down to the last row',
-  cols: 'Across the fiscal-year columns',
-  'rows-cols': 'Down to the last row, across the fiscal years',
-};
 
 /** One mapping row: where a template column's values come from. */
 export interface FieldMapEntry {
   target: string; // template column
   source: MapSource;
-  tab?: string;
-  from?: string; // first cell (workbook source)
-  span?: MapSpan;
+  /** business case field (workbook source), a key of BC_FIELDS */
+  field?: string;
   /** extra transformation, shown under the column name */
   note?: string;
   /** dropdown written into the downloaded template */
   dropdown?: 'category' | 'subcategory';
 }
 
-const W = (target: string, tab: string, from: string, span: MapSpan, extra: Partial<FieldMapEntry> = {}): FieldMapEntry =>
-  ({ target, source: 'workbook', tab, from, span, ...extra });
+export type MspoPlan = 'product' | 'resource' | 'billing';
+/** Every mapping table: the three plans, then the headline figures. */
+export type MapGroup = MspoPlan | 'figures';
+
+// ---- Business case fields a column can be filled from -------------------------------
+
+/** What one MSPO row is built from: the version, plus the line it comes from. */
+export interface RowContext {
+  d: BcVersionData;
+  product?: BcProduct;
+  /** product row: the quantity in this fiscal year */
+  qty?: number;
+  resource?: BcResource;
+  /** resource row: fiscal year label (FY26), skill, numbered position, man-days in the year */
+  fiscalYear?: string;
+  skill?: string;
+  position?: string;
+  mandays?: number;
+  billing?: BcBilling;
+}
+
+export interface BcField {
+  key: string;
+  /** shown in the mapping tables, e.g. "Product Plan > Unit cost" */
+  label: string;
+  /** the plans (and figures table) that may use it */
+  groups: MapGroup[];
+  get: (c: RowContext) => string | number | null;
+}
+
+const ALL: MapGroup[] = ['product', 'resource', 'billing', 'figures'];
+
+/** Every business case field the MSPO mapping can use. Values are passed
+ *  through exactly as saved (amounts in the version's quote currency). */
+export const BC_FIELDS: BcField[] = [
+  { key: 'product.category', label: 'Product Plan > Category', groups: ['product'], get: (c) => c.product?.category ?? null },
+  { key: 'product.description', label: 'Product Plan > Description', groups: ['product'], get: (c) => c.product?.desc ?? null },
+  { key: 'product.unitCost', label: 'Product Plan > Unit cost', groups: ['product'], get: (c) => c.product?.unitCost ?? null },
+  { key: 'product.quantity', label: 'Product Plan > Quantity in the fiscal year', groups: ['product'], get: (c) => c.qty ?? null },
+  { key: 'product.vendorCommitment', label: 'Product Plan > Vendor commitment (Yes/No)', groups: ['product'], get: (c) => (c.product ? (c.product.vendorCommitment ? 'Yes' : 'No') : null) },
+  { key: 'product.total', label: 'Product Plan > Line total', groups: ['product'], get: (c) => c.product?.total ?? null },
+  { key: 'product.quoteLine', label: 'Product Plan > Quote line no.', groups: ['product'], get: (c) => c.product?.ql ?? null },
+  { key: 'resource.role', label: 'Resource Plan > Role', groups: ['resource'], get: (c) => c.resource?.role ?? null },
+  { key: 'resource.skill', label: 'Resource Plan > Remarks (Skill)', groups: ['resource'], get: (c) => c.skill ?? null },
+  { key: 'resource.position', label: 'Resource Plan > Skill, numbered per person', groups: ['resource'], get: (c) => c.position ?? null },
+  { key: 'resource.grade', label: 'Resource Plan > Grade', groups: ['resource'], get: (c) => c.resource?.grade ?? null },
+  { key: 'resource.team', label: 'Resource Plan > Team', groups: ['resource'], get: (c) => c.resource?.team ?? null },
+  { key: 'resource.fiscalYear', label: 'Resource Plan > Fiscal year (FY26)', groups: ['resource'], get: (c) => c.fiscalYear ?? null },
+  { key: 'resource.dayRate', label: 'Labour Inputs > Day rate', groups: ['resource'], get: (c) => c.resource?.dayRate ?? null },
+  { key: 'resource.mandays', label: 'Resource Plan > Man-days in the fiscal year', groups: ['resource'], get: (c) => c.mandays ?? null },
+  { key: 'billing.schedule', label: 'Basic Info > Billing payment schedule', groups: ['billing'], get: (c) => c.billing?.schedule ?? null },
+  { key: 'billing.date', label: 'Basic Info > Target billing date', groups: ['billing'], get: (c) => c.billing?.date ?? null },
+  { key: 'billing.amount', label: 'Basic Info > Billing amount', groups: ['billing'], get: (c) => c.billing?.amount ?? null },
+  { key: 'summary.tcv', label: 'Summary > TCV', groups: ALL, get: (c) => c.d.header.tcv },
+  { key: 'summary.directCost', label: 'Summary > Direct cost', groups: ALL, get: (c) => c.d.header.directCost ?? null },
+  { key: 'summary.indirectCost', label: 'Summary > Indirect cost', groups: ALL, get: (c) => c.d.header.indirectCost ?? null },
+  { key: 'summary.ebitda', label: 'Summary > EBITDA', groups: ALL, get: (c) => c.d.header.ebitda ?? null },
+  { key: 'summary.ebitdaPct', label: 'Summary > EBITDA % (fraction)', groups: ALL, get: (c) => c.d.header.ebitdaPct ?? null },
+  { key: 'summary.marginPct', label: 'Summary > Gross margin %', groups: ALL, get: (c) => c.d.header.marginPct },
+  { key: 'summary.labourCost', label: 'Summary > Internal labour cost', groups: ALL, get: (c) => c.d.header.labourTotal },
+  { key: 'summary.productCost', label: 'Summary > Product cost', groups: ALL, get: (c) => c.d.header.productTotal },
+  { key: 'basic.currency', label: 'Basic Info > Quote currency', groups: ALL, get: (c) => c.d.header.currency },
+];
+
+export const fieldOf = (key?: string) => BC_FIELDS.find((f) => f.key === key);
+export const fieldsFor = (group: MapGroup) => BC_FIELDS.filter((f) => f.groups.includes(group));
+export const fieldLabel = (key?: string) => fieldOf(key)?.label ?? 'Choose a field';
+
+// ---- Default mapping ------------------------------------------------------------------
+
+const F = (target: string, field: string, extra: Partial<FieldMapEntry> = {}): FieldMapEntry =>
+  ({ target, source: 'workbook', field, ...extra });
 const MSPO = (target: string, note?: string): FieldMapEntry => ({ target, source: 'mspo', note });
 const MANUAL = (target: string, extra: Partial<FieldMapEntry> = {}): FieldMapEntry => ({ target, source: 'manual', ...extra });
 const CALC = (target: string, note?: string): FieldMapEntry => ({ target, source: 'calculated', note });
@@ -60,18 +118,17 @@ const PER_ROW_MSPO = 'Created in MSPO - key in after download';
 /** Product plan columns, in template order. */
 export const PRODUCT_FIELD_MAP: FieldMapEntry[] = [
   MSPO('Quote Line (Quote Line) (Quote Line)', QUOTE_LINE_NOTE),
-  W('Category', 'Product Plan', 'C6', 'rows', { dropdown: 'category' }),
+  F('Category', 'product.category', { dropdown: 'category' }),
   MANUAL('Sub-Category', { dropdown: 'subcategory', note: 'Dropdown in the downloaded file, filtered by Category' }),
   MANUAL('Delivery Date'),
-  W('Margin(%)', 'Summary', 'C22', 'single'),
-  W('Commodity/Service descriptions', 'Product Plan', 'D6', 'rows'),
-  W('Unit Price', 'Product Plan', 'F6', 'rows'),
-  W('Quantity', 'Product Plan', 'H6', 'rows-cols', { note: 'One MSPO row per fiscal year for each business case line' }),
-  W('Vendor Commitment', 'Product Plan', 'E6', 'rows'),
+  F('Margin(%)', 'summary.marginPct'),
+  F('Commodity/Service descriptions', 'product.description'),
+  F('Unit Price', 'product.unitCost'),
+  F('Quantity', 'product.quantity', { note: 'One MSPO row per fiscal year for each business case line' }),
+  F('Vendor Commitment', 'product.vendorCommitment'),
   MSPO('Vendor Quotation', PER_ROW_MSPO),
   MANUAL('UoM'),
 ];
-
 
 export const FY_MONTHS = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
 
@@ -79,43 +136,39 @@ export const FY_MONTHS = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov'
 export const RESOURCE_FIELD_MAP: FieldMapEntry[] = [
   MSPO('Quote Line Number (Quote Line) (Quote Line)', QUOTE_LINE_NOTE),
   MSPO('IT Code (Resource) (Bookable Resource)', PER_ROW_MSPO),
-  W('Role', 'Resource Plan', 'D8', 'rows'),
-  W('Skill', 'Resource Plan', 'H8', 'rows'),
-  W('Position Name', 'Resource Plan', 'H8', 'rows', { note: 'Skill numbered per row within each fiscal year, e.g. Onsite Desktop L1 -1, -2' }),
-  W('Grade', 'Resource Plan', 'E8', 'rows'),
+  F('Role', 'resource.role'),
+  F('Skill', 'resource.skill'),
+  F('Position Name', 'resource.position', { note: 'Skill numbered per row within each fiscal year, e.g. Onsite Desktop L1 -1, -2' }),
+  F('Grade', 'resource.grade'),
   MSPO('Team Code (Team) (Solution Offering Team)', PER_ROW_MSPO),
-  W('Margin(%)', 'Summary', 'C22', 'single'),
-  W('Fiscal Year', 'Resource Plan', 'I6', 'cols', { note: 'Business case 26/27 is written as FY26. Rows per line and year = man-days (I8 onward) / (man-days per month x months the project runs in that year)' }),
+  F('Margin(%)', 'summary.marginPct'),
+  F('Fiscal Year', 'resource.fiscalYear', { note: 'Business case 26/27 is written as FY26. Rows per line and year = man-days / (man-days per month x months the project runs in that year)' }),
   ...FY_MONTHS.map((m) => CALC(m, 'Man-days per month in the months the project runs; blank outside the project period')),
 ];
 
 /** Billing plan columns, in template order. */
 export const BILLING_FIELD_MAP: FieldMapEntry[] = [
   MSPO('Quote Line Number (Quote Line) (Quote Line)', QUOTE_LINE_NOTE),
-  W('Billing Plan Name', 'Basic Info', 'B31', 'rows'),
-  W('Target Billing Date', 'Basic Info', 'A31', 'rows'),
-  W('Billing Amount (Before Tax)', 'Basic Info', 'C31', 'rows'),
-  W('Remark', 'Basic Info', 'D31', 'rows'),
+  F('Billing Plan Name', 'billing.schedule'),
+  F('Target Billing Date', 'billing.date'),
+  F('Billing Amount (Before Tax)', 'billing.amount'),
+  MANUAL('Remark'),
 ];
 
-/** Headline figures keyed into MSPO, each one cell on the Summary tab. They
- *  are not part of a plan download. */
+/** Headline figures keyed into MSPO. They are not part of a plan download. */
 export const FIGURES_FIELD_MAP: FieldMapEntry[] = [
-  W('TCV', 'Summary', 'B6', 'single'),
-  W('Indirect cost', 'Summary', 'B24', 'single'),
-  W('Direct cost', 'Summary', 'B14', 'single'),
-  W('EBITDA', 'Summary', 'B50', 'single'),
-  W('EBITDA (%)', 'Summary', 'C50', 'single'),
+  F('TCV', 'summary.tcv'),
+  F('Indirect cost', 'summary.indirectCost'),
+  F('Direct cost', 'summary.directCost'),
+  F('EBITDA', 'summary.ebitda'),
+  F('EBITDA (%)', 'summary.ebitdaPct'),
 ];
 
-export type MspoPlan = 'product' | 'resource' | 'billing';
 export const MSPO_PLANS: { plan: MspoPlan; title: string; sheet: string; dnm: string }[] = [
   { plan: 'product', title: 'Product plan template', sheet: PRODUCT_SHEET, dnm: 'Product Plan' },
   { plan: 'resource', title: 'Resource plan template', sheet: RESOURCE_SHEET, dnm: 'Resource Plan' },
   { plan: 'billing', title: 'Billing plan template', sheet: BILLING_SHEET, dnm: 'Billing Plan' },
 ];
-/** Every mapping table: the three plans, then the headline figures. */
-export type MapGroup = MspoPlan | 'figures';
 export const MAP_GROUPS: { plan: MapGroup; title: string }[] = [
   ...MSPO_PLANS,
   { plan: 'figures', title: 'Business case figures' },
@@ -129,46 +182,22 @@ export const DEFAULT_MSPO_MAPPING: MspoDefaults = {
 };
 
 /** Template headers: the three hidden system columns, then the mapped columns. */
-export const headersFor = (plan: MspoPlan, defaults: MspoDefaults = DEFAULT_MSPO_MAPPING) =>
-  [...DNM(MSPO_PLANS.find((p) => p.plan === plan)!.dnm), ...defaults[plan].map((e) => e.target)];
+export const headersFor = (plan: MspoPlan, entries: FieldMapEntry[]) =>
+  [...DNM(MSPO_PLANS.find((p) => p.plan === plan)!.dnm), ...entries.map((e) => e.target)];
 
-// ---- Cell arithmetic -------------------------------------------------------------
-
-export function parseCell(s: string): { col: string; row: number } | null {
-  const m = /^([A-Za-z]{1,2})([1-9]\d*)$/.exec(s.trim());
-  return m ? { col: m[1].toUpperCase(), row: +m[2] } : null;
-}
-const colNum = (c: string) => [...c].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0);
 const colName = (n: number) => { let s = ''; while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); } return s; };
-const shiftCol = (c: string, by: number) => colName(colNum(c) + by);
 
-/** Last cell of a workbook range for a given row and fiscal-year count. With
- *  no counts (company defaults) it is described in words instead. */
-export function rangeEnd(e: FieldMapEntry, rows?: number, fyCount?: number): string {
-  if (e.source !== 'workbook' || !e.from) return e.source === 'mspo' ? 'From MSPO' : e.source === 'calculated' ? 'Calculated' : 'Manual';
-  const a = parseCell(e.from);
-  if (!a) return '?';
-  const endRow = rows ? `${a.row + rows - 1}` : '[last row]';
-  const endCol = fyCount ? shiftCol(a.col, fyCount - 1) : '[last FY column]';
-  switch (e.span ?? 'single') {
-    case 'single': return 'Single cell';
-    case 'rows': return `${a.col}${endRow}`;
-    case 'cols': return `${endCol}${a.row}`;
-    case 'rows-cols': return `${endCol}${endRow}`;
-  }
-}
-
-/** Checks a plan's workbook columns have valid first cells. */
-export function validatePlan(entries: FieldMapEntry[]): string[] {
+/** Checks every business case column has a field this plan can use. */
+export function validatePlan(plan: MapGroup, entries: FieldMapEntry[]): string[] {
   return entries
     .filter((e) => e.source === 'workbook')
-    .flatMap((e) => (!e.tab ? [`${e.target}: choose a business case tab`]
-      : !e.from || !parseCell(e.from) ? [`${e.target}: "${e.from ?? ''}" is not a cell like C6`]
+    .flatMap((e) => (!e.field ? [`${e.target}: choose a business case field`]
+      : !fieldOf(e.field)?.groups.includes(plan) ? [`${e.target}: ${fieldLabel(e.field)} is not available on this plan`]
         : []));
 }
 
 /** The mapping a tender actually uses: the company default with this
- *  tender's per-column overrides (tab and first cell). */
+ *  tender's per-column field overrides. */
 export function effectivePlan(
   defaults: MspoDefaults,
   t: Pick<Tender, 'mspoMapping'>,
@@ -176,13 +205,11 @@ export function effectivePlan(
 ): (FieldMapEntry & { overridden: boolean })[] {
   return defaults[plan].map((d) => {
     const o = t.mspoMapping?.[`${plan}:${d.target}`];
-    return o && d.source === 'workbook' ? { ...d, tab: o.tab, from: o.from, overridden: true } : { ...d, overridden: false };
+    return o && d.source === 'workbook' ? { ...d, field: o.field, overridden: true } : { ...d, overridden: false };
   });
 }
 
-// ---- What the parsed business case holds ------------------------------------------
-
-/** Lines the parsed business case actually has for a plan. */
+/** Lines the business case version has for a plan (one or more MSPO rows each). */
 export function detectedRows(d: BcVersionData, plan: MspoPlan): number {
   return plan === 'product' ? d.products.length : plan === 'resource' ? d.resources.length : d.billing.length;
 }
@@ -228,15 +255,15 @@ export function fiscalPeriods(d: BcVersionData): FiscalPeriod[] {
   return out;
 }
 
-/** Fiscal-year columns (I onward) the business case has. */
+/** Fiscal years the business case spans. */
 export const detectedFyCount = (d: BcVersionData) => fiscalPeriods(d).length;
 
-/** A labour line's man-days per fiscal year (Resource Plan I8 onward). Lines
+/** A labour line's man-days per fiscal year (Resource Plan). Lines
  *  without per-year figures are spread by the months run in each year. */
 export function lineFyMandays(r: BcResource, periods: FiscalPeriod[]): number[] {
   if (r.fyMandays) return periods.map((_, i) => r.fyMandays![i] ?? 0);
   const total = periods.reduce((n, p) => n + p.months.length, 0);
-  return periods.map((p) => Math.round((r.mandays * p.months.length / total) * 100) / 100);
+  return periods.map((p) => (r.mandays * p.months.length) / total);
 }
 
 /** How one labour line in one fiscal year becomes MSPO rows: man-days divided
@@ -252,7 +279,6 @@ export interface LineYearSplit {
   partialPerMonth: number;
 }
 
-const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export function splitLineYear(mandays: number, months: string[], daysPerMonth: number): LineYearSplit {
   if (mandays <= 0 || !months.length || daysPerMonth <= 0) return { mandays, months, heads: 0, fullRows: 0, partialPerMonth: 0 };
@@ -260,7 +286,7 @@ export function splitLineYear(mandays: number, months: string[], daysPerMonth: n
   const heads = mandays / capacity;
   const fullRows = Math.floor(heads + 1e-9);
   const rest = mandays - fullRows * capacity;
-  return { mandays, months, heads, fullRows, partialPerMonth: rest > 0.01 ? round2(rest / months.length) : 0 };
+  return { mandays, months, heads, fullRows, partialPerMonth: rest > 1e-9 ? rest / months.length : 0 };
 }
 export const rowsOfSplit = (s: LineYearSplit) => s.fullRows + (s.partialPerMonth > 0 ? 1 : 0);
 
@@ -280,58 +306,54 @@ const SKILL_BY_ROLE: Record<string, string> = {
   'Service Manager': 'Service Management',
   'Service Desk Analyst': 'Service Desk',
 };
-/** Skill = the Resource Plan remarks column (H). */
+/** Skill = the Resource Plan remarks (client-facing role title). */
 export const skillOf = (r: BcResource) => r.skill ?? SKILL_BY_ROLE[r.role] ?? r.role;
+
 
 export interface MspoFillOptions {
   /** the MSPO quote line, shared by all three plans */
   quoteLine: string;
-  rows: Partial<Record<MspoPlan, number>>;
   fyCount: number;
   /** man-days one person works in a month */
   daysPerMonth: number;
 }
 
 /** Per labour line, per fiscal year: the man-days and the rows they become. */
-export function resourceBreakdown(d: BcVersionData, o: Pick<MspoFillOptions, 'rows' | 'fyCount' | 'daysPerMonth'>) {
+export function resourceBreakdown(d: BcVersionData, o: Pick<MspoFillOptions, 'fyCount' | 'daysPerMonth'>) {
   const periods = fiscalPeriods(d).slice(0, o.fyCount);
-  const lines = d.resources.slice(0, o.rows.resource ?? d.resources.length);
   return {
     periods,
-    lines: lines.map((r) => {
+    lines: d.resources.map((r) => {
       const md = lineFyMandays(r, periods);
       return { line: r, skill: skillOf(r), years: periods.map((p, i) => splitLineYear(md[i], p.months, o.daysPerMonth)) };
     }),
   };
 }
 
-type Row = Record<string, string | number>;
+/** One MSPO row: what its mapped fields read, plus the per-month man-days. */
+interface PlanRow {
+  ctx: RowContext;
+  months?: string[];
+  perMonth?: number;
+}
 
-function productRows(d: BcVersionData, o: MspoFillOptions): Row[] {
-  const lines = d.products.slice(0, o.rows.product ?? d.products.length);
-  const out: Row[] = [];
-  for (const p of lines) {
-    splitAcrossYears(p.qty, o.fyCount).forEach((qty) => {
-      if (qty <= 0) return;
-      out.push({
-        'Quote Line (Quote Line) (Quote Line)': o.quoteLine,
-        Category: p.category,
-        'Margin(%)': +d.header.marginPct.toFixed(1),
-        'Commodity/Service descriptions': p.desc,
-        'Unit Price': p.unitCost,
-        Quantity: qty,
-        'Vendor Commitment': 'No',
-      });
+function productRows(d: BcVersionData, o: MspoFillOptions): PlanRow[] {
+  const out: PlanRow[] = [];
+  for (const p of d.products) {
+    // quantities per fiscal year as planned; older data without them is split
+    const perYear = p.fyQty ? Array.from({ length: o.fyCount }, (_, i) => p.fyQty![i] ?? 0) : splitAcrossYears(p.qty, o.fyCount);
+    perYear.forEach((qty) => {
+      if (qty > 0) out.push({ ctx: { d, product: p, qty } });
     });
   }
   return out;
 }
 
-function resourceRows(d: BcVersionData, o: MspoFillOptions): Row[] {
+function resourceRows(d: BcVersionData, o: MspoFillOptions): PlanRow[] {
   const { periods, lines } = resourceBreakdown(d, o);
   // Position Name = Skill numbered -1, -2 ... within each skill and fiscal year
   const seen: Record<string, number> = {};
-  const out: Row[] = [];
+  const out: PlanRow[] = [];
   for (const { line, skill, years } of lines) {
     years.forEach((s, i) => {
       const fy = periods[i].label;
@@ -340,14 +362,9 @@ function resourceRows(d: BcVersionData, o: MspoFillOptions): Row[] {
         const key = `${skill}|${fy}`;
         seen[key] = (seen[key] ?? 0) + 1;
         out.push({
-          'Quote Line Number (Quote Line) (Quote Line)': o.quoteLine,
-          Role: line.role,
-          Skill: skill,
-          'Position Name': `${skill} -${seen[key]}`,
-          Grade: line.grade,
-          'Margin(%)': +d.header.marginPct.toFixed(2),
-          'Fiscal Year': fy,
-          ...Object.fromEntries(s.months.map((m) => [m, perMonth])),
+          ctx: { d, resource: line, fiscalYear: fy, skill, position: `${skill} -${seen[key]}`, mandays: s.mandays },
+          months: s.months,
+          perMonth,
         });
       }
     });
@@ -355,20 +372,18 @@ function resourceRows(d: BcVersionData, o: MspoFillOptions): Row[] {
   return out;
 }
 
-function billingRows(d: BcVersionData, o: MspoFillOptions): Row[] {
-  return d.billing.slice(0, o.rows.billing ?? d.billing.length).map((b) => ({
-    'Quote Line Number (Quote Line) (Quote Line)': o.quoteLine,
-    'Billing Plan Name': b.schedule,
-    'Target Billing Date': b.date,
-    'Billing Amount (Before Tax)': Math.round(b.amount),
-    Remark: '',
-  }));
-}
+const billingRows = (d: BcVersionData): PlanRow[] => d.billing.map((b) => ({ ctx: { d, billing: b } }));
 
-/** Rows as arrays in template column order (system columns blank). */
-export function buildPlanRows(plan: MspoPlan, d: BcVersionData, o: MspoFillOptions, defaults: MspoDefaults = DEFAULT_MSPO_MAPPING): (string | number)[][] {
-  const rows = plan === 'product' ? productRows(d, o) : plan === 'resource' ? resourceRows(d, o) : billingRows(d, o);
-  return rows.map((r) => ['', '', '', ...defaults[plan].map((e) => r[e.target] ?? '')]);
+/** Rows as arrays in template column order (system columns blank). Each
+ *  business case column reads its mapped field, exactly as saved. */
+export function buildPlanRows(plan: MspoPlan, d: BcVersionData, o: MspoFillOptions, entries: FieldMapEntry[]): (string | number)[][] {
+  const rows = plan === 'product' ? productRows(d, o) : plan === 'resource' ? resourceRows(d, o) : billingRows(d);
+  return rows.map((r) => ['', '', '', ...entries.map((e): string | number => {
+    if (e.source === 'workbook') return fieldOf(e.field)?.get(r.ctx) ?? '';
+    if (e.source === 'mspo') return e.target.startsWith('Quote Line') ? o.quoteLine : '';
+    if (e.source === 'calculated') return r.months?.includes(e.target) && r.perMonth !== undefined ? r.perMonth : '';
+    return '';
+  })]);
 }
 
 // ---- Product category lists (dropdowns in the downloaded template) ---------------
@@ -412,18 +427,18 @@ const safeRef = (t: Tender) => (t.ref || t.name).replace(/\W+/g, '_');
 /** Rows given dropdowns, leaving room for lines added after download. */
 const DROPDOWN_ROWS = 500;
 
-export function downloadMspoPlan(plan: MspoPlan, t: Tender, d: BcVersionData, o: MspoFillOptions, defaults: MspoDefaults = DEFAULT_MSPO_MAPPING) {
+export function downloadMspoPlan(plan: MspoPlan, t: Tender, d: BcVersionData, o: MspoFillOptions, entries: FieldMapEntry[]) {
   const meta = MSPO_PLANS.find((p) => p.plan === plan)!;
-  const headers = headersFor(plan, defaults);
-  const sheet = XLSX.utils.aoa_to_sheet([headers, ...buildPlanRows(plan, d, o, defaults)]);
+  const headers = headersFor(plan, entries);
+  const sheet = XLSX.utils.aoa_to_sheet([headers, ...buildPlanRows(plan, d, o, entries)]);
   // the three system columns stay in the file, hidden
   sheet['!cols'] = headers.map((h, i) => (i < 3 ? { hidden: true } : { wch: Math.min(48, Math.max(12, h.length + 2)) }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, sheet, meta.sheet);
   const fileName = `MSPO_${plan}_plan_${safeRef(t)}.xlsx`;
 
-  const catIdx = defaults[plan].findIndex((e) => e.dropdown === 'category');
-  const subIdx = defaults[plan].findIndex((e) => e.dropdown === 'subcategory');
+  const catIdx = entries.findIndex((e) => e.dropdown === 'category');
+  const subIdx = entries.findIndex((e) => e.dropdown === 'subcategory');
   if (catIdx < 0 && subIdx < 0) {
     XLSX.writeFile(wb, fileName);
     return;

@@ -43,6 +43,21 @@ export function useCitation() {
   return useContext(Ctx);
 }
 
+/** Plain-text form of a passage for matching: typographic quotes and dashes
+ *  as ASCII (PDF standard fonts store them that way), single spaces. */
+const plain = (s: string) =>
+  s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim();
+
+/** The passage's opening words (up to 60 characters, whole words): short
+ *  enough to sit on the passage's first line, so the match never has to span
+ *  a line break, and distinctive enough to find the passage. */
+function searchQuery(passage: string): string {
+  const p = plain(passage);
+  if (p.length <= 60) return p;
+  const cut = p.slice(0, 60);
+  return cut.slice(0, cut.lastIndexOf(' ') > 30 ? cut.lastIndexOf(' ') : 60);
+}
+
 /** PDF / Word viewer. After loading it searches for the cited passage and
  *  highlights it in place (the viewer scrolls to the match); if the passage
  *  cannot be found it opens at the cited page instead. `onLocated` reports
@@ -70,9 +85,9 @@ function LocalDocumentViewer({
         await viewer.load(src);
         if (cancelled) return;
         const pages = viewer.pageCount;
-        if (find && find.trim().length > 8) {
-          // search a distinctive slice of the passage; fuzzy tolerates spacing differences
-          const query = find.trim().slice(0, 80);
+        const query = find ? searchQuery(find) : '';
+        if (query.length > 8) {
+          // search the passage's opening words; fuzzy tolerates spacing differences
           const matches = await viewer.search(query, { fuzzy: true });
           if (cancelled) return;
           if (matches.length) {
@@ -124,10 +139,36 @@ function PassageWithContext({
   );
 }
 
-export function SpreadsheetDocumentViewer({ src, fileName, initialSheet }: { src: string; fileName: string; initialSheet?: string }) {
+/** Cells holding the cited passage: a cell whose text contains the passage's
+ *  opening words, or (for a short passage) a cell the passage contains. */
+function matchingCells(sheet: XLSX.WorkSheet, find: string): Set<string> {
+  const query = searchQuery(find).toLowerCase();
+  const out = new Set<string>();
+  if (query.length < 4) return out;
+  for (const [addr, cell] of Object.entries(sheet)) {
+    if (addr.startsWith('!')) continue;
+    const text = plain(String((cell as XLSX.CellObject).w ?? (cell as XLSX.CellObject).v ?? '')).toLowerCase();
+    if (text.length > 3 && (text.includes(query) || (text.length >= 8 && query.includes(text)))) out.add(addr);
+  }
+  return out;
+}
+
+/** Excel viewer (SheetJS grid with the workbook's sheet tabs). Opens the cited
+ *  sheet, highlights the cells holding the cited passage and scrolls to the
+ *  first one; `onLocated` reports whether it was found. */
+export function SpreadsheetDocumentViewer({
+  src, fileName, initialSheet, find, onLocated,
+}: {
+  src: string;
+  fileName: string;
+  initialSheet?: string;
+  find?: string;
+  onLocated?: (how: 'match' | 'none', sheet: string) => void;
+}) {
   const [workbook, setWorkbook] = useState<XLSX.WorkBook | null>(null);
   const [activeSheet, setActiveSheet] = useState('');
   const [error, setError] = useState('');
+  const firstMatch = useRef<HTMLTableCellElement>(null);
   useEffect(() => {
     let cancelled = false;
     setWorkbook(null);
@@ -141,12 +182,15 @@ export function SpreadsheetDocumentViewer({ src, fileName, initialSheet }: { src
         const loaded = XLSX.read(sourceBuffer, { type: 'array', bookVBA: /\.xlsm$/i.test(fileName) });
         if (!cancelled) {
           setWorkbook(loaded);
-          // open the cited tab when it exists in the workbook
+          // open the cited tab when it exists in the workbook, else the sheet holding the passage
           const wanted = initialSheet
             ? loaded.SheetNames.find((s) => s.toLowerCase() === initialSheet.toLowerCase())
               ?? loaded.SheetNames.find((s) => s.toLowerCase().includes(initialSheet.toLowerCase()))
             : undefined;
-          setActiveSheet(wanted ?? loaded.SheetNames[0] ?? '');
+          const holding = find ? loaded.SheetNames.filter((s) => matchingCells(loaded.Sheets[s], find).size > 0) : [];
+          const open = wanted && (!holding.length || holding.includes(wanted)) ? wanted : holding[0] ?? wanted ?? loaded.SheetNames[0] ?? '';
+          setActiveSheet(open);
+          if (find) onLocated?.(holding.length ? 'match' : 'none', open);
         }
       } catch (reason: unknown) {
         if (!cancelled) setError(reason instanceof Error ? reason.message : 'Unable to render workbook');
@@ -155,11 +199,17 @@ export function SpreadsheetDocumentViewer({ src, fileName, initialSheet }: { src
     return () => {
       cancelled = true;
     };
-  }, [fileName, src, initialSheet]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileName, src, initialSheet, find]);
+  useEffect(() => { firstMatch.current?.scrollIntoView({ block: 'center', inline: 'nearest' }); }, [workbook, activeSheet]);
   if (error) return <p className="error docx-error">{error}</p>;
   if (!workbook) return <p className="muted small">Loading workbook...</p>;
   const sheet = workbook.Sheets[activeSheet];
   const rows = sheet ? XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' }) : [];
+  const matches = sheet && find ? matchingCells(sheet, find) : new Set<string>();
+  // the grid starts at the sheet's first used cell
+  const origin = sheet?.['!ref'] ? XLSX.utils.decode_range(sheet['!ref']).s : { r: 0, c: 0 };
+  let firstSet = false;
   const columnCount = Math.max(1, ...rows.map((row) => row.length));
   return (
     <div className="spreadsheet-viewer">
@@ -177,9 +227,16 @@ export function SpreadsheetDocumentViewer({ src, fileName, initialSheet }: { src
             {rows.map((row, rowIndex) => (
               <tr key={`${activeSheet}-${rowIndex}`}>
                 <th scope="row">{rowIndex + 1}</th>
-                {Array.from({ length: columnCount }, (_, columnIndex) => (
-                  <td key={columnIndex}>{String(row[columnIndex] ?? '')}</td>
-                ))}
+                {Array.from({ length: columnCount }, (_, columnIndex) => {
+                  const hit = matches.has(XLSX.utils.encode_cell({ r: origin.r + rowIndex, c: origin.c + columnIndex }));
+                  const first = hit && !firstSet;
+                  if (first) firstSet = true;
+                  return (
+                    <td key={columnIndex} className={hit ? 'match' : undefined} ref={first ? firstMatch : undefined}>
+                      {String(row[columnIndex] ?? '')}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
@@ -277,7 +334,7 @@ function DocumentViewer({ citation, onClose }: { citation: CitationInfo; onClose
         <div className={`docviewer-panes ${isTender || !citation.references || citation.references.length <= 1 ? 'single' : ''}`}>
           {(citation.references?.length
             ? citation.references
-            : [{ location: citation.tab ?? (isTender ? 'Referenced section' : 'Workbook'), excerpt: isTender ? citation.excerpt : '' }]
+            : [{ location: citation.tab ?? (isTender ? 'Referenced section' : 'Workbook'), excerpt: citation.excerpt }]
           ).map((reference, index) => (
             <section className="docviewer-pane" aria-label={`${isTender ? 'Tender' : 'Business Case'} document reference ${index + 1}`} key={`${reference.location}-${index}`}>
               <div className="docviewer-pane-head"><FileText size={14} aria-hidden /> {citation.fileName ?? citation.title} · {reference.location}</div>
@@ -300,9 +357,25 @@ function DocumentViewer({ citation, onClose }: { citation: CitationInfo; onClose
                     </>
                   )}
                 </div>
-              ) : citation.documentUrl && (extension === 'xlsx' || extension === 'xlsm') ? (
-                <div className="docpage-scroll">
-                  <SpreadsheetDocumentViewer src={citation.documentUrl} fileName={citation.fileName ?? citation.title} initialSheet={reference.location} />
+              ) : citation.documentUrl && (extension === 'xlsx' || extension === 'xlsm' || extension === 'xls') ? (
+                <div className="document-viewer-stack">
+                  <div className="docpage-scroll">
+                    <SpreadsheetDocumentViewer
+                      src={citation.documentUrl}
+                      fileName={citation.fileName ?? citation.title}
+                      initialSheet={reference.location}
+                      find={reference.excerpt || undefined}
+                      onLocated={(how, sheet) => setLocated(
+                        how === 'match' ? `Passage found and highlighted on the ${sheet} sheet.` : `Opened the ${sheet} sheet. The exact passage is shown below.`,
+                      )}
+                    />
+                  </div>
+                  {reference.excerpt && (
+                    <>
+                      {located && <div className="muted small" style={{ padding: '6px 12px 0' }} role="status">{located}</div>}
+                      <PassageWithContext location={reference.location} excerpt={reference.excerpt} before={citation.contextBefore} after={citation.contextAfter} />
+                    </>
+                  )}
                 </div>
               ) : <div className="docpage-scroll"><div className="docpage">
                 <div className="docpage-title">{citation.title}</div>

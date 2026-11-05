@@ -10,7 +10,8 @@ import { Button, Banner, ConfirmDialog, IconButton, TabsBar } from '../ui/ui';
 import { TenderPackSection, useJobSim, docCounts } from '../components/rfp';
 import { BcSection, DrbSummarySection, DrbBcSection } from '../components/bc';
 import { money } from '../lib/format';
-import { bcFigures, figureMoney, latestParsedBc } from '../lib/figures';
+import { bcFigures, figureMoney } from '../lib/figures';
+import { latestVersion } from '../businessCase/versions';
 import { canDo } from '../config';
 import { useToast } from '../ui/toast';
 import { dateShort, ts } from '../lib/format';
@@ -29,8 +30,7 @@ function attentionItems(t: Tender, rules: RuleDef[]): string[] {
   if (failedDocs) items.push(`${failedDocs} document${failedDocs > 1 ? 's' : ''} failed`);
   if ((t.status === 'Draft' || t.status === 'Active') && t.closingDate && t.closingDate < today) items.push('Closing date passed');
   const lvBc = t.bcVersions[t.bcVersions.length - 1];
-  if (lvBc?.layoutUnrecognised) items.push('Business case layout not recognised');
-  else if (lvBc && failedChecks(runFinalChecks(lvBc.data, rules)).length) items.push('Final Check failures');
+  if (lvBc && failedChecks(runFinalChecks(lvBc.data, rules)).length) items.push('Final Check failures');
   return items;
 }
 
@@ -42,8 +42,10 @@ function WonTcvCards() {
     .filter((t) => t.status === 'Won' && t.bcVersions.length)
     .map((t) => {
       const d = new Date(t.closingDate || t.createdAt);
+      const header = t.bcVersions[t.bcVersions.length - 1].data.header;
       return {
-        tcv: t.bcVersions[t.bcVersions.length - 1].data.header.tcv,
+        tcv: header.tcv,
+        currency: header.currency,
         year: d.getFullYear(),
         quarter: Math.floor(d.getMonth() / 3) + 1,
       };
@@ -56,7 +58,12 @@ function WonTcvCards() {
   const [year, setYear] = useState(latestWin?.year ?? now.getFullYear());
   const [quarter, setQuarter] = useState(latestWin?.quarter ?? Math.floor(now.getMonth() / 3) + 1);
   const inPeriod = wins.filter((w) => w.year === year && (mode === 'year' || w.quarter === quarter));
-  const total = inPeriod.reduce((a, w) => a + w.tcv, 0);
+  // tenders are quoted in different currencies: one total per currency, never mixed
+  const totals = [...new Set(inPeriod.map((w) => w.currency))].sort().map((currency) => ({
+    currency,
+    tcv: inPeriod.filter((w) => w.currency === currency).reduce((a, w) => a + w.tcv, 0),
+    count: inPeriod.filter((w) => w.currency === currency).length,
+  }));
   const label = mode === 'year' ? `Full year ${year}` : `Q${quarter} ${year}`;
   return (
     <div className="tcv-stack">
@@ -82,8 +89,13 @@ function WonTcvCards() {
       </div>
       <div className="kpi">
         <span>Total Won TCV · {label}</span>
-        <b>{money(total)}</b>
-        <div className="muted small">{inPeriod.length} tender{inPeriod.length === 1 ? '' : 's'} won in this period</div>
+        {totals.length === 0 ? <b>{money(0)}</b> : totals.map((x) => (
+          <div key={x.currency}>
+            <b>{figureMoney(x.tcv, x.currency)}</b>
+            {totals.length > 1 && <span className="muted small"> · {x.count} tender{x.count === 1 ? '' : 's'}</span>}
+          </div>
+        ))}
+        <div className="muted small">{inPeriod.length} tender{inPeriod.length === 1 ? '' : 's'} won in this period{totals.length > 1 ? ', totalled per currency' : ''}</div>
       </div>
     </div>
   );
@@ -98,6 +110,69 @@ const STATUS_REASONS: Record<Tender['status'], TenderStatusReason[]> = {
   Won: ['Won (Won)'],
   Closed: ['Revised (Closed)', 'Lost (Closed)'],
 };
+
+/** Outcome and lessons learned, once a tender is Won or Closed. The lessons
+ *  travel with the tender's approved business case into Historical data,
+ *  where it becomes a source for the AI's next drafts. */
+function LessonsPanel({ t }: { t: Tender }) {
+  const { state, dispatch } = useStore();
+  const toast = useToast();
+  const canEdit = canDo.recordLessons(state.role);
+  const [draft, setDraft] = useState<string | null>(null);
+  const filed = state.repository.find((r) => r.tenderId === t.id && r.kind === 'Business case');
+  const editing = draft !== null;
+  return (
+    <section className="card">
+      <div className="section-heading">
+        <div>
+          <h3 style={{ margin: 0 }}>Outcome and lessons learned</h3>
+          <div className="muted small">
+            {t.drbOutcome ? `Outcome: ${t.drbOutcome}. ` : ''}
+            {filed
+              ? `The approved business case is filed in Historical data as ${filed.refId}, a ${filed.aiSource ?? 'excluded'} source for new AI drafts.`
+              : 'No approved business case was filed for this tender.'}
+          </div>
+        </div>
+        {!editing && (
+          <Button compact icon={Pencil} disabled={!canEdit} title={canEdit ? undefined : 'The Bidding Manager and BD record lessons learned'} onClick={() => setDraft(t.lessons?.text ?? '')}>
+            {t.lessons ? 'Edit lessons' : 'Add lessons'}
+          </Button>
+        )}
+      </div>
+      {editing ? (
+        <div className="summary-remarks">
+          <textarea
+            value={draft}
+            aria-label="Lessons learned"
+            placeholder="What decided the outcome: price, scope, compliance gaps, customer feedback, what to repeat or avoid"
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <div className="review-toolbar-actions" style={{ marginTop: 8 }}>
+            <Button compact variant="ghost" onClick={() => setDraft(null)}>Cancel</Button>
+            <Button
+              compact
+              variant="primary"
+              onClick={() => {
+                dispatch({ type: 'set-lessons', tenderId: t.id, text: draft });
+                toast.push('success', 'Lessons learned saved', filed ? `Also added to ${filed.refId} in Historical data.` : undefined);
+                setDraft(null);
+              }}
+            >
+              Save lessons
+            </Button>
+          </div>
+        </div>
+      ) : t.lessons ? (
+        <p style={{ margin: '8px 0 0', whiteSpace: 'pre-line' }}>
+          {t.lessons.text}
+          <span className="muted small"> - {t.lessons.by}, {dateShort(t.lessons.at)}</span>
+        </p>
+      ) : (
+        <p className="muted" style={{ margin: '8px 0 0' }}>No lessons recorded yet.</p>
+      )}
+    </section>
+  );
+}
 
 function TenderDetail() {
   const { state, dispatch } = useStore();
@@ -156,6 +231,7 @@ function TenderDetail() {
           read-only; its documents and business case stay available in the repository.
         </Banner>
       )}
+      {(t.status === 'Won' || t.status === 'Closed') && <LessonsPanel t={t} />}
       <TabsBar
         tabs={isDrb ? [
           { key: 'drb-summary', label: 'Summary' },
@@ -290,7 +366,7 @@ function TenderList() {
   // Won TCV, needs attention and the money columns are for Finance and the DRB
   const financials = canDo.viewFinancials(state.role);
   const figuresOf = (t: Tender) => {
-    const v = latestParsedBc(t);
+    const v = latestVersion(t);
     return v ? bcFigures(v.data, state.mspoDefaults, t) : undefined;
   };
 
@@ -396,10 +472,10 @@ function TenderList() {
                   <td><StatusPill value={t.statusReason} /></td>
                   {financials && (
                     <>
-                      <td className="num">{figureMoney(fig?.tcv ?? null)}</td>
-                      <td className="num">{figureMoney(fig?.indirect ?? null)}</td>
-                      <td className="num">{figureMoney(fig?.direct ?? null)}</td>
-                      <td className={`num ${fig?.ebitda != null && fig.ebitda < 0 ? 'neg' : ''}`}>{figureMoney(fig?.ebitda ?? null)}</td>
+                      <td className="num">{figureMoney(fig?.tcv ?? null, latestVersion(t)?.data.header.currency)}</td>
+                      <td className="num">{figureMoney(fig?.indirect ?? null, latestVersion(t)?.data.header.currency)}</td>
+                      <td className="num">{figureMoney(fig?.direct ?? null, latestVersion(t)?.data.header.currency)}</td>
+                      <td className={`num ${fig?.ebitda != null && fig.ebitda < 0 ? 'neg' : ''}`}>{figureMoney(fig?.ebitda ?? null, latestVersion(t)?.data.header.currency)}</td>
                     </>
                   )}
                   {!financials && <td>

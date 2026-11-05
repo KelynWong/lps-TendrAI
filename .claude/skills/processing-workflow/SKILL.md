@@ -62,6 +62,6 @@ Per the architecture spec, the status updater Lambda writes RDS directly, connec
 ## Rules
 - Only ids, S3 keys and counts pass between states (`include_execution_data = true` logs payloads on errors; 256 KB limit).
 - Log ids and status only. Never document text, file names, prompts, model output or error causes.
-- Figures pass through exactly as read.
+- Figures pass through exactly as read or saved. The V3 business case draft (planned seventh stage, "Draft business case") is not in the state machine yet; see "V3 backend follow-up" in docs/USER_GUIDE.md.
 - IAM changes stay least-privilege; explain the risk (CLAUDE.md).
 - Check before done: `terraform fmt -check -recursive infra`, `terraform -chdir=infra/envs/floci validate` (and `prod` after `init -backend=false`), `npm --prefix api run typecheck`, `python -m py_compile lambdas/<fn>/handler.py` where Python is available.
