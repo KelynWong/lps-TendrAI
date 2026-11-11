@@ -121,6 +121,48 @@ export function aiSources(repository: RepoRecord[], forTenderId?: string): Draft
     }));
 }
 
+/** When a tender is Won or Closed it leaves the Tenders page and is filed in
+ *  Historical data as a Tender record (with its tender pack). A record already
+ *  filed for it (linked by id, or an open record of the same name) is updated
+ *  in place. */
+export function tenderRecord(t: Tender, repository: RepoRecord[], at: string): RepoRecord {
+  const day = at.slice(0, 10);
+  const status: RepoRecord['status'] = t.status === 'Won' ? 'Won' : t.statusReason === 'Lost (Closed)' ? 'Lost' : 'Closed';
+  const existing = repository.find((r) => r.kind === 'Tender' && (r.tenderId === t.id || (!r.tenderId && r.name === t.name)));
+  const documents = t.pack.map((d) => d.name);
+  if (existing) {
+    return {
+      ...existing,
+      tenderId: t.id,
+      status: existing.status === 'Archived' ? existing.status : status,
+      statusReason: t.statusReason,
+      updated: day,
+      documents: [...new Set([...existing.documents, ...documents])],
+    };
+  }
+  return {
+    id: `rt-${t.id}`,
+    name: t.name,
+    agency: t.agency,
+    kind: 'Tender',
+    type: t.type,
+    status,
+    statusReason: t.statusReason,
+    owner: t.owner,
+    created: t.createdAt,
+    updated: day,
+    documents,
+    versions: [{ v: 1, date: t.createdAt, by: t.owner, note: 'Tender pack received' }],
+    tenderId: t.id,
+  };
+}
+
+/** Adds a record to Historical data, or replaces the one with the same id. */
+export const upsertRecord = (repository: RepoRecord[], record: RepoRecord): RepoRecord[] =>
+  repository.some((r) => r.id === record.id)
+    ? repository.map((r) => (r.id === record.id ? record : r))
+    : [record, ...repository];
+
 /** When a tender's outcome is recorded (Won or Lost), its last approved
  *  business case is filed in Historical data as an AI source: a won case is
  *  preferred, a lost one standard. A record already linked to the tender (an

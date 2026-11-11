@@ -2,18 +2,18 @@
 // and Final Check), the seven workbook tabs with review badges, and the save
 // bar. Edits stay on a draft until they are saved as the next version.
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AlertTriangle, ArrowRight, Check, Download, HelpCircle, History, Save, Undo2 } from 'lucide-react';
 import type { BcVersion } from '../types';
 import type { BusinessCaseState, Provenance } from './model';
 import { confidenceLevel } from '../lib/confidence';
-import { computeSummary } from './calc';
+import { computeSummary, withEvenBilling } from './calc';
 import { money, pct } from './format';
 import { DraftCtx, summaryCellKeys } from './draft';
 import { ProvenanceLegendItems } from './cells';
 import { versionData } from './workbook';
 import { failedChecks, ruleTabs, runFinalChecks, type RuleDef } from '../rules/finalChecks';
-import { Banner, Button, TabsBar } from '../ui/ui';
+import { Banner, Button, ConfirmDialog, TabsBar } from '../ui/ui';
 import BasicInfoTab from './tabs/BasicInfoTab';
 import SummaryTab from './tabs/SummaryTab';
 import CashFlowTab from './tabs/CashFlowTab';
@@ -80,6 +80,8 @@ export function Workspace({
   onDownload,
   notice,
   saveWarning,
+  saveConfirm,
+  actions,
 }: {
   /** the version shown: the latest when editing, or one picked on the Versions tab */
   base: BcVersion;
@@ -97,13 +99,23 @@ export function Workspace({
   notice?: ReactNode;
   /** shown in the save bar, e.g. approvals that do not carry over */
   saveWarning?: string;
+  /** when set, Save asks for confirmation first (e.g. it voids DRB approvals) */
+  saveConfirm?: { title: string; body: ReactNode; confirmLabel: string };
+  /** extra buttons in the action row, e.g. the DRB's Approve */
+  actions?: ReactNode;
 }) {
   const [tab, setTab] = useState('basic');
   const [showChecks, setShowChecks] = useState(false);
   const [showHint, setShowHint] = useState(false);
   const [comment, setComment] = useState('');
+  const [confirmingSave, setConfirmingSave] = useState(false);
   const dirty = unsavedSummary !== null;
-  const ctx = useMemo(() => ({ bc: draft, update: setDraft, dirty, editable, userName }), [draft, setDraft, dirty, editable, userName]);
+  // every edit keeps the billing plan billing the TCV, evenly split
+  const update = useCallback(
+    (fn: (bc: BusinessCaseState) => BusinessCaseState) => setDraft((d) => withEvenBilling(fn(d))),
+    [setDraft],
+  );
+  const ctx = useMemo(() => ({ bc: draft, update, dirty, editable, userName }), [draft, update, dirty, editable, userName]);
 
   const s = computeSummary(draft);
   // Final Check runs live on the draft with the managed rules - warns, never blocks
@@ -124,6 +136,7 @@ export function Workspace({
   ];
 
   const save = () => {
+    setConfirmingSave(false);
     onSave(comment);
     setComment('');
   };
@@ -169,7 +182,7 @@ export function Workspace({
             <div className="save-bar-actions">
               <input type="text" value={comment} placeholder="Comment (optional): what changed" aria-label="Version comment" onChange={(e) => setComment(e.target.value)} />
               <Button variant="ghost" icon={Undo2} onClick={() => setDraft(() => base.bc)}>Discard</Button>
-              <Button variant="primary" icon={Save} onClick={save}>Save changes to v{base.v}</Button>
+              <Button variant="primary" icon={Save} onClick={() => (saveConfirm ? setConfirmingSave(true) : save())}>Save changes to v{base.v}</Button>
             </div>
           </div>
         )}
@@ -188,8 +201,22 @@ export function Workspace({
             <Button icon={Download} disabled={dirty} title={dirty ? 'Save or discard your changes first - the download is a saved version' : `Download v${base.v} as an Excel workbook`} onClick={onDownload}>
               Download v{base.v} (.xlsx)
             </Button>
+            {actions}
           </div>
         </div>
+
+        {saveConfirm && (
+          <ConfirmDialog
+            open={confirmingSave}
+            title={saveConfirm.title}
+            confirmLabel={saveConfirm.confirmLabel}
+            danger
+            onConfirm={save}
+            onClose={() => setConfirmingSave(false)}
+          >
+            {saveConfirm.body}
+          </ConfirmDialog>
+        )}
 
         {showHint && <div className="hint-row"><ProvenanceLegendItems /></div>}
 

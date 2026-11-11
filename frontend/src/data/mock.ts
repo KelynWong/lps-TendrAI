@@ -23,7 +23,7 @@ import type { BusinessCaseState, Provenance } from '../businessCase/model';
 import { confirmProv, diffSummary } from '../businessCase/draft';
 import { evenBilling } from '../businessCase/generate';
 import { computeSummary, defaultVendorColumns } from '../businessCase/calc';
-import { aiDraftVersion, aiSources, outcomeRecord, withApproval, withSavedEdits } from '../businessCase/versions';
+import { aiDraftVersion, aiSources, outcomeRecord, tenderRecord, withApproval, withSavedEdits } from '../businessCase/versions';
 import type {
   AuditEntry,
   Boilerplate,
@@ -35,6 +35,7 @@ import type {
   RepoRecord,
   TemplateDoc,
   Tender,
+  TenderStatusReason,
 } from '../types';
 
 // Dates are produced relative to "today" so the demo never looks stale.
@@ -937,6 +938,26 @@ function seedBusinessCases() {
       vendorCommitment: false, unitCost: 420, qtyByFY: [180, 0, 0], remarks: '', provenance: { kind: 'human', confirmedBy: felicia },
     }],
   }));
+  // draft tenders' status reasons follow their business case, as in the app
+  for (const t of TENDERS) {
+    if (t.status === 'Draft') t.statusReason = draftReasonFor(t);
+    // Won and Closed tenders are filed in Historical data
+    if (t.status === 'Won' || t.status === 'Closed') {
+      const record = tenderRecord(t, REPOSITORY, `${t.closingDate || t.createdAt}T17:00:00+08:00`);
+      const i = REPOSITORY.findIndex((r) => r.id === record.id);
+      if (i >= 0) REPOSITORY[i] = record; else REPOSITORY.push(record);
+    }
+  }
+}
+
+/** Pending until the BD team saves the business case, In Progress while it is
+ *  edited, In Approval from the first DRB approval, Approved once all approve. */
+function draftReasonFor(t: Tender): TenderStatusReason {
+  const lv = t.bcVersions[t.bcVersions.length - 1];
+  if (!lv) return 'Pending (Draft)';
+  if (lv.approvedAt) return 'Approved (Draft)';
+  if (lv.approvals?.length) return 'In Approval (Draft)';
+  return t.bcVersions.length > 1 || lv.edits?.length ? 'In Progress (Draft)' : 'Pending (Draft)';
 }
 
 // ---- Template and boilerplate libraries -------------------------------------

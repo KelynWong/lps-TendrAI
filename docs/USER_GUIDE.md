@@ -51,7 +51,7 @@ If you try to leave a screen with unsaved edits, TendrAI asks **Leave without sa
 2. Fill in **Title**, **Type** (Agency or Commercial) and **Customer / agency**. These are required. You can also add the **GeBIZ reference number** and **SFDC CRM ID**.
    - Titles must be unique.
    - If another tender already uses the GeBIZ reference, you will see a warning.
-3. Click **Create tender**. The tender opens with the status reason `In Progress (Draft)`.
+3. Click **Create tender**. The tender opens with the status reason `Pending (Draft)`. It stays Pending while the Tender pack is processed and the AI drafts the Business case, until the BD team first saves changes to it.
 4. On the **Tender** tab, under **Documents**, click **Add documents**.
 5. Drag files into the box, or click it to browse. PDF, Word and Excel files are accepted. A file with the same name and size as one already in the pack is rejected as a duplicate.
 6. Click **Confirm upload**. The files are stored as `Uploaded`, but nothing is processed yet.
@@ -189,7 +189,7 @@ Version numbers only go up when the DRB approves. Version 1 is the AI draft. Whe
 3. TendrAI runs the Final Check rules on the saved figures. The toast says whether any failed.
 4. If some DRB members have already approved the working Version, saving **voids** their approvals: they approved the figures before your change. The save bar warns you first, and the Version needs approving again.
 
-Changing quantities or unit costs does not move the billing plan or the Cash Flow vendor columns. Final Check flags the gap ("Billing plan equals CCB", "Cash Flow reconciles with the plans"). Fix it on Basic Info (change the **Billing frequency** to regenerate the lines) and on Cash Flow.
+The billing plan always bills the TCV, split evenly: any edit that changes the TCV re-divides it across the billing lines, so the billing total always equals the TCV. Billing amounts cannot be typed; change the **Billing frequency** (Monthly, Quarterly or Yearly) to regenerate the lines, or add and remove lines. Changing quantities or unit costs does not move the Cash Flow vendor columns: Final Check flags the gap ("Cash Flow reconciles with the plans"), and you fix it on Cash Flow.
 
 **Versions tab**
 
@@ -206,15 +206,17 @@ Changing quantities or unit costs does not move the billing plan or the Cash Flo
 
 **Approving a Version** *(DRB)*
 
-1. Open the tender's **Business case** tab, then **Versions**.
-2. On the latest Version, click **Approve vN** in the **DRB approvals** column and confirm. If AI-drafted values in the Version are still unreviewed, you must tick the acknowledgement first. Failed Final Checks are shown but do not block approval.
+1. Open the tender's **Business case** tab. The button above the workbook reads **Approve vN (n of 3 approved)** for the latest Version.
+2. Click it and confirm. The button is greyed out, with the reason in its tooltip, when you are viewing an earlier Version, have already approved, or the Version is an unchanged copy of an approved one. **Versions** lists who has approved each Version and when. If AI-drafted values in the Version are still unreviewed, you must tick the acknowledgement first. Failed Final Checks are shown but do not block approval.
 3. A Version is approved once **all three** DRB members have approved it. The last approver confirms **Approve and archive**. Then:
    - The approved Version is archived and stays **read-only** for good. It cannot be edited or deleted.
    - TendrAI adds an identical working copy as the next Version ("Copy of approved vN"). Any later changes are saved to it.
    - The working copy cannot be approved until someone saves changes to it.
 4. Only the latest Version can be approved. If the BD team saves changes before everyone has approved, the approvals given so far are voided and the Version needs approving again.
 
-**Tender status follows the approvals.** While the tender's status is `Draft`:
+**Tender status follows the Business case.** While the tender's status is `Draft`:
+- it is `Pending (Draft)` from creation until the BD team first saves changes to the Business case
+- saving changes sets it to `In Progress (Draft)`
 - the first approval sets the reason to `In Approval (Draft)`
 - the last approval sets it to `Approved (Draft)`
 - saving changes after approvals (which voids them, or starts the next round) sets it back to `In Progress (Draft)`
@@ -229,6 +231,7 @@ DRB members open a tender to read-only **Summary** and **Business case** tabs:
 
 **Outcome and lessons learned.** The Bidding Manager records the outcome by changing the tender status to `Won (Won)` or `Lost (Closed)`.
 
+- The tender leaves the **Tenders** page and is filed in **Historical data** as a Tender record with its Tender pack (so is a `Revised (Closed)` tender).
 - The tender's last approved Business case is then filed in **Historical data** as a source for future AI drafts: a won case is **preferred**, a lost one **standard**.
 - On the closed tender, **Outcome and lessons learned** lets the Bidding Manager or BD record what decided the result (price, scope, compliance gaps, customer feedback). The lessons are saved with the filed business case, and every change is in the audit log.
 
@@ -275,7 +278,7 @@ The **Templates** page has three tabs: **Templates**, **Certifications** (the ba
 
 ## 13. Historical data
 
-The **Historical data** page lists every tender, proposal, Business case and BOM record. Expand a row to see its stored Documents and Business case version history.
+The **Historical data** page lists the records of Won and Closed tenders: tender, proposal, Business case and BOM records. Open tenders (`Draft` and `Active`) are on the **Tenders** page instead. Expand a row to see its stored Documents and Business case version history.
 
 **AI draft source** (Business case records). This column decides how the AI may use a past business case when it drafts a new one:
 - **Preferred:** cited first. This is the default for won cases.

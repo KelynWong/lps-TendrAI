@@ -25,7 +25,7 @@ import { AUDIT, BOILERPLATE, BOILERPLATE_TAGS, REPOSITORY, TEMPLATES, TENDERS } 
 import { buildDemoExtraction } from '../data/extraction';
 import { DEFAULT_RULES, type RuleDef } from '../rules/finalChecks';
 import { DEFAULT_MSPO_MAPPING, fieldLabel, type FieldMapEntry, type MapGroup, type MspoDefaults } from '../mspo/mapping';
-import { aiDraftVersion, aiSources, approvalBlocked, editBlocked, outcomeRecord, withApproval, withSavedEdits } from '../businessCase/versions';
+import { aiDraftVersion, aiSources, approvalBlocked, editBlocked, outcomeRecord, tenderRecord, upsertRecord, withApproval, withSavedEdits } from '../businessCase/versions';
 import { DEFAULT_FX_RATES } from '../businessCase/parameters';
 import type { BusinessCaseState } from '../businessCase/model';
 import { canDo, DRB_APPROVERS } from '../config';
@@ -132,15 +132,16 @@ export type Action =
   | { type: 'request-restore'; id: string }
   | { type: 'complete-restore'; id: string };
 
-// The tender's status follows the DRB approvals while it is a Draft: the first
-// approval makes it In Approval, the last one Approved, and saving changes
-// (which voids approvals, or starts the next round after an approval) puts it
-// back In Progress. Active, Won and Closed tenders are never changed here.
+// The tender's status follows its business case while it is a Draft: Pending
+// from creation until the BD team first saves the business case, then In
+// Progress; the first DRB approval makes it In Approval and the last one
+// Approved; saving changes again (which voids approvals, or starts the next
+// round after an approval) puts it back In Progress. Active, Won and Closed
+// tenders are never changed here.
 function draftStatus(t: Tender, statusReason: TenderStatusReason): Partial<Tender> {
   return t.status === 'Draft' && t.statusReason !== statusReason ? { statusReason } : {};
 }
-const statusAfterSave = (t: Tender) =>
-  t.statusReason === 'In Approval (Draft)' || t.statusReason === 'Approved (Draft)' ? draftStatus(t, 'In Progress (Draft)') : {};
+const statusAfterSave = (t: Tender) => draftStatus(t, 'In Progress (Draft)');
 
 function patchTender(state: AppState, id: string, fn: (t: Tender) => Tender): AppState {
   return { ...state, tenders: state.tenders.map((t) => (t.id === id ? fn(t) : t)) };
@@ -348,14 +349,16 @@ function reducer(state: AppState, a: Action): AppState {
         drbOutcome: a.statusReason === 'Won (Won)' ? 'Won' : a.statusReason === 'Lost (Closed)' ? 'Lost' : t.drbOutcome,
         stepIdx: a.status === 'Won' || a.status === 'Closed' ? 5 : t.stepIdx,
       }));
+      const t = next.tenders.find((x) => x.id === a.tenderId);
+      if (!t || (a.status !== 'Won' && a.status !== 'Closed')) return next;
+      const now = new Date().toISOString();
+      // a Won or Closed tender leaves the Tenders page for Historical data
+      let repository = upsertRecord(next.repository, tenderRecord(t, next.repository, now));
       // a known outcome files the approved business case as an AI drafting source
       const outcome = a.statusReason === 'Won (Won)' ? 'Won' : a.statusReason === 'Lost (Closed)' ? 'Lost' : null;
-      const t = next.tenders.find((x) => x.id === a.tenderId);
-      const record = outcome && t ? outcomeRecord(t, outcome, state.repository, new Date().toISOString()) : null;
-      if (!record) return next;
-      return next.repository.some((r) => r.id === record.id)
-        ? { ...next, repository: next.repository.map((r) => (r.id === record.id ? record : r)) }
-        : { ...next, repository: [record, ...next.repository] };
+      const record = outcome ? outcomeRecord(t, outcome, repository, now) : null;
+      if (record) repository = upsertRecord(repository, record);
+      return { ...next, repository };
     }
     case 'set-lessons': {
       const user = state.user;

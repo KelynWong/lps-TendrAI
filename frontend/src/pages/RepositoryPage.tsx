@@ -52,11 +52,13 @@ export default function RepositoryPage() {
     created: (r: RepoRecord) => r.created,
     updated: (r: RepoRecord) => r.updated,
   };
-  const rows = cf.apply(state.repository, colAcc);
+  // open tenders and their working files live on the Tenders page, not here
+  const history = state.repository.filter((r) => r.status !== 'Open');
+  const rows = cf.apply(history, colAcc);
   const sorted = apply(rows, colAcc);
   const pager = usePagedTable(sorted);
   const fcol = (k: keyof typeof colAcc) => ({
-    filterValues: state.repository.map((r) => String(colAcc[k](r))),
+    filterValues: history.map((r) => String(colAcc[k](r))),
     filter: cf.filters[k],
     onFilter: (f: Parameters<typeof cf.set>[1]) => cf.set(k, f),
   });
@@ -121,7 +123,7 @@ export default function RepositoryPage() {
                       )}
                     </td>
                     <td>{r.agency}</td>
-                    <td><span className="badge badge-sector">{r.type}</span></td>
+                    <td><span className={`badge ${r.type === 'Agency' ? 'pill-agency' : 'pill-commercial'}`}>{r.type}</span></td>
                     <td><StatusPill value={r.status} /></td>
                     <td>
                       <StatusPill value={r.statusReason} />

@@ -14,6 +14,7 @@ import {
   PRC_OPS_PCT,
   PRC_STAMP_PCT,
   computeSummary,
+  divideEvenly,
   fxRate,
   withQuoteCurrency,
 } from '../calc';
@@ -181,16 +182,6 @@ export default function BasicInfoTab() {
   const addMonthsIso = (iso: string, m: number) => {
     const d0 = new Date(iso);
     return new Date(d0.getFullYear(), d0.getMonth() + m, 1).toISOString().slice(0, 10);
-  };
-
-  /** Spread the TCV evenly over the lines (the last line absorbs rounding) */
-  const divideEvenly = (lines: BusinessCaseState['billing'], tcv: number) => {
-    if (!lines.length) return lines;
-    const base = Math.floor(tcv / lines.length);
-    return lines.map((b, i) => ({
-      ...b,
-      amount: i === lines.length - 1 ? tcv - base * (lines.length - 1) : base,
-    }));
   };
 
   /** Changing the cadence regenerates the lines over the project duration */
@@ -433,12 +424,9 @@ export default function BasicInfoTab() {
                   />
                 </td>
                 <td className="num">
-                  <NumCell
-                    value={b.amount}
-                    editable={canEdit}
-                    format={(v) => money(v)}
-                    onCommit={(v) => update((d) => ({ ...d, billing: d.billing.map((x) => (x.id === b.id ? { ...x, amount: v, provenance: confirmProv(x.provenance, user.name, true) } : x)) }))}
-                  />
+                  <Fx f={'= TCV ÷ number of billing lines\nRe-divided whenever the TCV changes,\nso the billing total always equals the TCV.'}>
+                    <span className="computed">{money(b.amount)}</span>
+                  </Fx>
                 </td>
                 <td>
                   <TextCell

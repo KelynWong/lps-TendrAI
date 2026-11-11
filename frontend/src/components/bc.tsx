@@ -247,8 +247,38 @@ function MspoPanel({ t, unsaved }: { t: Tender; unsaved?: boolean }) {
     </label>
   );
 
+  // every warning on the chosen version goes in one banner, above the picker
+  const warnings: ReactNode[] = [
+    !version.approvedAt && (
+      <>
+        v{version.v} has not been approved by the DRB ({version.approvals?.length ?? 0} of {DRB_APPROVERS.length} approvals).
+        You can still generate the templates from it, but MSPO is normally set up from an approved version.
+      </>
+    ),
+    failed.length > 0 && (
+      <>
+        {failed.length} Final Check{failed.length > 1 ? 's' : ''} failed on this version. You can
+        still generate the MSPO templates, but the downloads carry this warning.
+        {canDo.readOnlyReview(state.role) && <FailedChecksList runs={runs} />}
+      </>
+    ),
+  ].filter(Boolean);
+
   return (
     <section>
+      {warnings.length === 1 && <Banner kind="warning">{warnings[0]}</Banner>}
+      {warnings.length > 1 && (
+        <Banner kind="warning">
+          <ul style={{ margin: 0, paddingLeft: '1.2em' }}>
+            {warnings.map((w, i) => <li key={i}>{w}</li>)}
+          </ul>
+        </Banner>
+      )}
+      {unsaved && version.v === latestV && (
+        <Banner kind="info">
+          The business case has unsaved edits. The MSPO templates use v{version.v} as last saved; save the edits to include them.
+        </Banner>
+      )}
       <div className="hd-form">
         <label>
           Business case version
@@ -262,24 +292,6 @@ function MspoPanel({ t, unsaved }: { t: Tender; unsaved?: boolean }) {
           <span className="muted small mspo-help">Every figure is written exactly as saved in this version.</span>
         </label>
       </div>
-      {!version.approvedAt && (
-        <Banner kind="warning">
-          v{version.v} has not been approved by the DRB ({version.approvals?.length ?? 0} of {DRB_APPROVERS.length} approvals).
-          You can still generate the templates from it, but MSPO is normally set up from an approved version.
-        </Banner>
-      )}
-      {unsaved && version.v === latestV && (
-        <Banner kind="info">
-          The business case has unsaved edits. The MSPO templates use v{version.v} as last saved; save the edits to include them.
-        </Banner>
-      )}
-      {failed.length > 0 && (
-        <Banner kind="warning">
-          {failed.length} Final Check{failed.length > 1 ? 's' : ''} failed on this version. You can
-          still generate the MSPO templates, but the downloads carry this warning.
-          {canDo.readOnlyReview(state.role) && <FailedChecksList runs={runs} />}
-        </Banner>
-      )}
       <div className="mspo-inputs">
         <div className="section-heading">
           <div>
@@ -515,12 +527,10 @@ function ResourceSplitTable({ breakdown, daysPerMonth }: { breakdown: ReturnType
 const versionLabel = (v: BcVersion) =>
   v.origin === 'ai-draft' ? 'AI first draft' : `Copy of approved v${v.copyOf}`;
 
-/** One line per DRB member: when they approved this version, or that they have not. */
-function ApprovalsCell({ t, v, onApprove }: { t: Tender; v: BcVersion; onApprove: () => void }) {
-  const { state } = useStore();
+/** One line per DRB member: when they approved this version, or that they have not.
+ *  Approving is done from the Business case tab. */
+function ApprovalsCell({ t, v }: { t: Tender; v: BcVersion }) {
   const blocked = approvalBlocked(t, v);
-  const mine = state.user && (v.approvals ?? []).some((a) => a.by === state.user!.name);
-  const canApprove = canDo.approveBc(state.role) && !isTenderLocked(t) && !blocked && !mine;
   if (v.origin === 'approved-copy' && !v.edits?.length && !(v.approvals ?? []).length) return <span className="muted small">Not needed until edited</span>;
   return (
     <div className="approvals-cell">
@@ -533,13 +543,12 @@ function ApprovalsCell({ t, v, onApprove }: { t: Tender; v: BcVersion; onApprove
           </div>
         );
       })}
-      {canApprove && <Button compact icon={Check} onClick={onApprove}>Approve v{v.v}</Button>}
     </div>
   );
 }
 
 /** The business case tab. `drb` = the DRB's read-only view: no MSPO tab, and
- *  the Versions tab is where each DRB member approves. */
+ *  each DRB member approves from the Business case tab's action row. */
 export function BcSection({ t, drb = false }: { t: Tender; drb?: boolean }) {
   const { state, dispatch } = useStore();
   const toast = useToast();
@@ -625,6 +634,25 @@ export function BcSection({ t, drb = false }: { t: Tender; drb?: boolean }) {
     );
     setApproveVersion(null);
   };
+  // the DRB approves the latest version from the Business case tab; the button
+  // stays visible to DRB members and says why when it is unavailable
+  const approvedByMe = !!state.user && (lv.approvals ?? []).some((a) => a.by === state.user!.name);
+  const approveReason = !isLatest ? `Only the latest version (v${lv.v}) can be approved`
+    : isTenderLocked(t) ? 'The tender is locked'
+    : approvalBlocked(t, lv) ? `Not available: ${approvalBlocked(t, lv)}`
+    : approvedByMe ? `You have already approved v${lv.v}`
+    : null;
+  const approveAction = canDo.approveBc(state.role) && (
+    <Button
+      variant="primary"
+      icon={Check}
+      disabled={approveReason !== null}
+      title={approveReason ?? `Record your approval of v${lv.v}`}
+      onClick={() => { setAckUnreviewed(false); setApproveVersion(lv); }}
+    >
+      Approve v{lv.v} ({lv.approvals?.length ?? 0} of {DRB_APPROVERS.length} approved)
+    </Button>
+  );
   const failed = failedChecks(runs);
   const approveUnreviewed = approveVersion ? unreviewedCounts(approveVersion.bc).total : 0;
   const approveFailed = approveVersion ? failedChecks(runFinalChecks(approveVersion.data, state.rules)).length : 0;
@@ -670,6 +698,17 @@ export function BcSection({ t, drb = false }: { t: Tender; drb?: boolean }) {
           onHistory={() => dispatch({ type: 'open-audit', tender: t.ref || t.name, section: 'Business case', returnTo: { tenderId: t.id, packTab: drb ? 'drb-bc' : 'bc', label: t.ref || t.name } })}
           notice={notice}
           saveWarning={partial ? `Saving voids the ${partial.length} of ${DRB_APPROVERS.length} DRB approvals on v${lv.v}` : undefined}
+          saveConfirm={partial ? {
+            title: `Void ${partial.length} DRB approval${partial.length === 1 ? '' : 's'} on v${lv.v}?`,
+            confirmLabel: 'Save and void approvals',
+            body: (
+              <p>
+                v{lv.v} has {partial.length} of {DRB_APPROVERS.length} DRB approvals ({partial.map((x) => x.by).join(', ')}).
+                Saving these changes voids them, and every DRB member needs to approve v{lv.v} again.
+              </p>
+            ),
+          } : undefined}
+          actions={approveAction}
         />
       )}
 
@@ -729,7 +768,7 @@ export function BcSection({ t, drb = false }: { t: Tender; drb?: boolean }) {
                         {f === 0 ? <span className="ok"><Check size={13} aria-hidden /> All passed</span> : <span className="err"><AlertTriangle size={13} aria-hidden /> {f} failed</span>}
                       </td>
                       <td>
-                        <ApprovalsCell t={t} v={v} onApprove={() => { setAckUnreviewed(false); setApproveVersion(v); }} />
+                        <ApprovalsCell t={t} v={v} />
                       </td>
                       <td>
                         <IconButton
@@ -790,7 +829,7 @@ export function BcSection({ t, drb = false }: { t: Tender; drb?: boolean }) {
         ) : (
           <p>
             This records approval {(approveVersion.approvals?.length ?? 0) + 1} of {DRB_APPROVERS.length} on v{approveVersion.v}.
-            If the BD team saves changes before everyone has approved, the approvals given so far are voided and v{approveVersion.v}
+            If the BD team saves changes before everyone has approved, the approvals given so far are voided and v{approveVersion.v}{' '}
             needs approving again.
           </p>
         ))}

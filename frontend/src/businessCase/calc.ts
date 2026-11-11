@@ -352,6 +352,22 @@ export function computeSummary(bc: BusinessCaseState): BcSummary {
   };
 }
 
+/** Spreads a total evenly over the billing lines (the last line absorbs rounding). */
+export function divideEvenly(lines: BusinessCaseState['billing'], tcv: number): BusinessCaseState['billing'] {
+  if (!lines.length) return lines;
+  const base = Math.floor(tcv / lines.length);
+  return lines.map((b, i) => ({ ...b, amount: i === lines.length - 1 ? tcv - base * (lines.length - 1) : base }));
+}
+
+/** The billing plan always bills the TCV, split evenly across its lines:
+ *  re-divides it whenever an edit leaves the total off the TCV. */
+export function withEvenBilling(bc: BusinessCaseState): BusinessCaseState {
+  if (!bc.billing.length) return bc;
+  const tcv = Math.round(computeSummary(bc).total.tcv);
+  const billing = divideEvenly(bc.billing, tcv);
+  return billing.every((b, i) => b.amount === bc.billing[i].amount) ? bc : { ...bc, billing };
+}
+
 /**
  * Monthly man-day distribution for one labour line (the Labour Inputs grid):
  * a manual distribution if one was keyed in, otherwise each FY's man-days

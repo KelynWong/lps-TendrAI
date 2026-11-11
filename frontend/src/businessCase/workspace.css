@@ -45,8 +45,15 @@
   font-weight: 600; color: var(--ink);
 }
 .save-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--brand-purple); display: inline-block; }
-.save-bar-actions { margin-left: auto; display: flex; align-items: center; gap: var(--sp-2); }
-.save-bar-actions input[type="text"] { width: 260px; }
+.save-bar-actions { margin-left: auto; display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; min-width: 0; }
+/* same field style as the app's other text inputs, at button height */
+.save-bar-actions input[type="text"] {
+  flex: 1 1 260px; width: 320px; min-width: 0; height: 40px; padding: 0 var(--sp-3);
+  font: inherit; font-size: var(--fs-dense); font-weight: 400;
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  background: var(--surface); color: var(--ink);
+}
+.save-bar-actions input[type="text"]::placeholder { color: var(--ink-secondary); }
 
 /* ---- Tables ----------------------------------------------------------------------- */
 .section-row td { background: var(--surface-subtle) !important; font-weight: 600; }
@@ -123,9 +130,9 @@ th.add-col:hover .add-col-btn { color: var(--brand-purple); border-color: var(--
 .computed { color: var(--ink); font-variant-numeric: tabular-nums; }
 .strong { font-weight: 600; }
 .warn-inline { color: var(--warning); font-weight: 600; margin-left: var(--sp-2); }
-.billing-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; }
+.billing-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-3); }
 .billing-head h3 { margin-bottom: 0; }
-.outcome-picker { font-size: var(--fs-label); color: var(--ink-secondary); font-weight: 600; display: flex; flex-direction: column; gap: 4px; }
+.outcome-picker { font-size: var(--fs-label); color: var(--ink-secondary); font-weight: 600; display: flex; align-items: center; gap: var(--sp-2); }
 
 /* Summary remarks and the Working tab */
 .summary-remarks { margin-top: var(--sp-4); }

@@ -33,13 +33,14 @@ export default function LoginPage() {
           </div>
           <h1>{APP_NAME}</h1>
           <p>
-            Turn tender documents into a review-ready business case faster - with requirements
-            extracted, each version checked, and MSPO plans ready to download.
+            Turn a tender pack into a sourced first-draft business case - reviewed by BD,
+            approved by the DRB, and ready for MSPO, all in one place.
           </p>
           <ul className="login-points">
-            <li><Check size={14} aria-hidden />Upload each business case version and run Final Checks to catch reconciliation, billing and cash-flow issues before review</li>
-            <li><Check size={14} aria-hidden />Process the tender pack once to extract submission requirements, qualification criteria and clauses with source citations for faster verification</li>
-            <li><Check size={14} aria-hidden />Generate pre-filled MSPO product, resource and billing plans from the business case, reducing manual re-keying</li>
+            <li><Check size={14} aria-hidden />Process the tender pack once to extract submission requirements, qualification criteria and clauses, each cited to its source</li>
+            <li><Check size={14} aria-hidden />Start from an AI-drafted business case built from the tender and past business cases, with every figure cited or marked as an estimate until confirmed</li>
+            <li><Check size={14} aria-hidden />Edit with live totals and Final Checks, then have all three DRB members approve each version in the app</li>
+            <li><Check size={14} aria-hidden />Fill MSPO product, resource and billing plans straight from the approved figures, with no re-keying</li>
           </ul>
         </div>
       </div>

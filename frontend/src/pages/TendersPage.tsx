@@ -385,11 +385,13 @@ function TenderList() {
     direct: (t: Tender) => figuresOf(t)?.direct ?? -1,
     ebitda: (t: Tender) => figuresOf(t)?.ebitda ?? -Infinity,
   };
-  const rows = cf.apply(state.tenders, colAcc);
+  // Won and Closed tenders are listed in Historical data, not here
+  const openTenders = state.tenders.filter((t) => t.status === 'Draft' || t.status === 'Active');
+  const rows = cf.apply(openTenders, colAcc);
   const sorted = apply(rows, colAcc);
   const pager = usePagedTable(sorted);
   const fcol = (k: keyof typeof colAcc) => ({
-    filterValues: state.tenders.map((t) => String(colAcc[k](t))),
+    filterValues: openTenders.map((t) => String(colAcc[k](t))),
     filter: cf.filters[k],
     onFilter: (f: Parameters<typeof cf.set>[1]) => cf.set(k, f),
   });
@@ -438,8 +440,8 @@ function TenderList() {
             <tr>
               <SortTh label="Created at" k="created" sort={sort} onToggle={toggle} />
               <SortTh label="SFDC CRM ID" k="sfdcCrmId" sort={sort} onToggle={toggle} {...fcol('sfdcCrmId')} />
-              <SortTh label="GeBIZ ref" k="ref" sort={sort} onToggle={toggle} filterValues={state.tenders.map((t) => t.ref)} filter={cf.filters.ref} onFilter={(f) => cf.set('ref', f)} />
-              <SortTh label="Title" k="name" sort={sort} onToggle={toggle} filterValues={state.tenders.map((t) => t.name)} filter={cf.filters.name} onFilter={(f) => cf.set('name', f)} />
+              <SortTh label="GeBIZ ref" k="ref" sort={sort} onToggle={toggle} filterValues={openTenders.map((t) => t.ref)} filter={cf.filters.ref} onFilter={(f) => cf.set('ref', f)} />
+              <SortTh label="Title" k="name" sort={sort} onToggle={toggle} filterValues={openTenders.map((t) => t.name)} filter={cf.filters.name} onFilter={(f) => cf.set('name', f)} />
               <SortTh label="Customer / agency" k="agency" sort={sort} onToggle={toggle} {...fcol('agency')} />
               <SortTh label="Type" k="type" sort={sort} onToggle={toggle} {...fcol('type')} />
               <SortTh label="Status" k="status" sort={sort} onToggle={toggle} {...fcol('status')} />
@@ -495,7 +497,7 @@ function TenderList() {
                 </tr>
               );
             })}
-            {sorted.length === 0 && <tr><td colSpan={8 + (financials ? 4 : 1) + 1} className="muted">No tenders match these filters. Clear the column filters to see all {state.tenders.length} tenders.</td></tr>}
+            {sorted.length === 0 && <tr><td colSpan={8 + (financials ? 4 : 1) + 1} className="muted">No tenders match these filters. Clear the column filters to see all {openTenders.length} tenders.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -518,7 +520,7 @@ function TenderList() {
             type: form.type,
             projectType: 'Milestone Based',
             status: 'Draft',
-            statusReason: 'In Progress (Draft)' as TenderStatusReason,
+            statusReason: 'Pending (Draft)' as TenderStatusReason,
             owner: state.user?.name ?? 'Bidding Manager',
             createdAt: new Date().toISOString().slice(0, 10),
             closingDate: form.closingDate,
